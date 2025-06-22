@@ -2,6 +2,7 @@
 Database connection management.
 """
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import (
@@ -14,12 +15,17 @@ from sqlalchemy.pool import NullPool
 from app.config.settings import settings
 from app.database.models import Base
 
+# Initialize logger
+logger = logging.getLogger(__name__)
+
 # Create async engine
 engine = create_async_engine(
     settings.database_url,
     echo=False,  # settings.database_echo if needed
-    pool_size=20,  # settings.database_pool_size if needed
-    max_overflow=30,  # settings.database_max_overflow if needed
+    pool_size=10,  # Reduced pool size to prevent connection exhaustion
+    max_overflow=20,  # Reduced max overflow
+    pool_pre_ping=True,  # Enable connection health checks
+    pool_recycle=3600,  # Recycle connections every hour
     poolclass=NullPool if "sqlite" in settings.database_url else None,
 )
 
@@ -45,21 +51,25 @@ async def close_database() -> None:
 @asynccontextmanager
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     """
-    Get async database session.
+    Get async database session with improved error handling for concurrent operations.
     
     Usage:
         async with get_db_session() as session:
             # Use session here
             pass
     """
-    async with async_session_factory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
+    session = None
+    try:
+        session = async_session_factory()
+        yield session
+        await session.commit()
+    except Exception as e:
+        if session:
             await session.rollback()
-            raise
-        finally:
+        logger.error(f"Database session error: {e}")
+        raise
+    finally:
+        if session:
             await session.close()
 
 

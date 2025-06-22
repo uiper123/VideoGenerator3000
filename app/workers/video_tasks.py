@@ -15,9 +15,10 @@ from sqlalchemy.orm import sessionmaker
 from app.workers.celery_app import VideoTask
 from app.config.constants import VideoStatus
 from app.config.settings import settings
-from app.database.models import VideoTask as VideoTaskModel, VideoFragment
+from app.database.models import VideoTask as VideoTaskModel, VideoFragment, User
 from app.video_processing.downloader import VideoDownloader
 from app.video_processing.processor import VideoProcessor
+from app.video_processing.moviepy_processor import VideoProcessorMoviePy
 
 logger = logging.getLogger(__name__)
 
@@ -386,9 +387,6 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
     Returns:
         Dict with processing results including fragments
     """
-    from app.video_processing.moviepy_processor import VideoProcessorMoviePy
-    import asyncio
-    from app.services.user_settings import UserSettingsService
     from app.database.models import VideoTask as VideoTaskModel
     
     # Create output directory
@@ -414,28 +412,30 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
     
     if user_id:
         try:
-            # Run async function in sync context
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            title_color = loop.run_until_complete(
-                UserSettingsService.get_style_setting(user_id, 'title_style', 'color')
-            )
-            title_size = loop.run_until_complete(
-                UserSettingsService.get_style_setting(user_id, 'title_style', 'size')
-            )
-            subtitle_color = loop.run_until_complete(
-                UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'color')
-            )
-            subtitle_size = loop.run_until_complete(
-                UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'size')
-            )
-            font_name = loop.run_until_complete(
-                UserSettingsService.get_style_setting(user_id, 'title_style', 'font')
-            )
-            loop.close()
+            # Get user settings directly from database using sync session
+            with get_sync_db_session() as session:
+                user = session.get(User, user_id)
+                if user and user.settings:
+                    # Extract settings from user.settings JSON
+                    settings = user.settings
+                    
+                    # Get title settings
+                    title_style = settings.get('title_style', {})
+                    title_color = title_style.get('color', 'white')
+                    title_size = title_style.get('size', 'medium')
+                    font_name = title_style.get('font', 'DejaVu Sans Bold')
+                    
+                    # Get subtitle settings
+                    subtitle_style = settings.get('subtitle_style', {})
+                    subtitle_color = subtitle_style.get('color', 'white')
+                    subtitle_size = subtitle_style.get('size', 'medium')
+                    
+                    logger.info(f"Retrieved user settings for {user_id}: title_color={title_color}, title_size={title_size}")
+                else:
+                    logger.info(f"No custom settings found for user {user_id}, using defaults")
+                    
         except Exception as e:
-            logger.warning(f"Failed to get user settings for {user_id}: {e}")
+            logger.warning(f"Failed to get user settings for {user_id}: {e}, using defaults")
     
     # Get font path
     # This logic is no longer needed as we've set a reliable default font
@@ -451,10 +451,10 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
         fragment_duration=settings_dict.get("duration", 30),
         quality=settings_dict.get("quality", "1080p"),
         title=settings_dict.get("title", ""),
-        title_color=settings_dict.get("title_color", "white"),
-        title_size=settings_dict.get("title_size", "medium"),
-        subtitle_color=settings_dict.get("subtitle_color", "white"),
-        subtitle_size=settings_dict.get("subtitle_size", "medium"),
+        title_color=title_color,
+        title_size=title_size,
+        subtitle_color=subtitle_color,
+        subtitle_size=subtitle_size,
         font_path=None, # Set to None to use the default font
         enable_subtitles=settings_dict.get("subtitles", True)
     )

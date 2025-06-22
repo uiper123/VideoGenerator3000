@@ -146,7 +146,6 @@ class VideoProcessorMoviePy:
                 audio_codec='aac',
                 temp_audiofile='temp-audio.m4a',
                 remove_temp=True,
-                verbose=False,
                 logger=None,  # Disable MoviePy's verbose logging
                 preset='ultrafast',
                 threads=4
@@ -283,10 +282,11 @@ class VideoProcessorMoviePy:
             List of subtitle segments
         """
         try:
-            # Use a static method for subtitle generation to avoid circular dependencies
+            # Create a VideoProcessor instance for subtitle generation
             from app.video_processing.processor import VideoProcessor
             
-            subtitles = VideoProcessor.generate_subtitles_from_audio(video_path, 0, duration)
+            processor = VideoProcessor(self.output_dir)
+            subtitles = processor.generate_subtitles_from_audio(video_path, 0, duration)
             
             return subtitles
             
@@ -440,7 +440,6 @@ class VideoProcessorMoviePy:
                     audio_codec='aac',
                     temp_audiofile=f'temp-audio-{i}.m4a',
                     remove_temp=True,
-                    verbose=False,
                     logger=None,
                     preset='ultrafast',
                     threads=4
