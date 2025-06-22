@@ -10,8 +10,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Set work directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies, including Node.js for pytubefix
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     wget \
     curl \
@@ -19,6 +19,9 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
     imagemagick \
+    gnupg \
+    nodejs \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the custom ImageMagick policy to fix MoviePy text rendering issues.
