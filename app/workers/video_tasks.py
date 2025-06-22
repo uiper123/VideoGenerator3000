@@ -47,6 +47,13 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
     """
     logger.info(f"Starting video download for task {task_id}: {url}")
     
+    # Add delay between retries to avoid rapid requests
+    if self.request.retries > 0:
+        import time
+        delay = min(30 * (2 ** self.request.retries), 300)  # Max 5 minute delay
+        logger.info(f"Retry attempt {self.request.retries}, waiting {delay} seconds to avoid rate limiting...")
+        time.sleep(delay)
+    
     try:
         # Update task status
         with get_sync_db_session() as session:
@@ -65,7 +72,7 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
         
         try:
             # Download video with enhanced error handling
-            logger.info(f"Attempting to download video from {url}")
+            logger.info(f"Attempting to download video from {url} (attempt {self.request.retries + 1})")
             download_result = downloader.download(url, quality)
             logger.info(f"Download successful for task {task_id}")
             
@@ -76,9 +83,13 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
             
             # Categorize the error for better user feedback
             if "Sign in to confirm you're not a bot" in error_msg or "bot detection" in error_msg.lower():
-                user_friendly_error = "YouTube требует подтверждения. Попробуйте другое видео или попробуйте позже."
+                user_friendly_error = "YouTube требует подтверждения. Попробуйте другое видео или повторите позже."
             elif "Video unavailable" in error_msg:
                 user_friendly_error = "Видео недоступно. Проверьте ссылку или попробуйте другое видео."
+            elif "Video is private" in error_msg:
+                user_friendly_error = "Видео является приватным и недоступно для скачивания."
+            elif "removed by the uploader" in error_msg:
+                user_friendly_error = "Видео было удалено автором."
             elif "Video too long" in error_msg:
                 user_friendly_error = "Видео слишком длинное (максимум 3 часа)."
             elif "Video too large" in error_msg:
@@ -89,6 +100,8 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
                 user_friendly_error = "Превышено время ожидания при скачивании."
             elif "403" in error_msg or "forbidden" in error_msg.lower():
                 user_friendly_error = "Доступ к видео ограничен."
+            elif "All download strategies failed" in error_msg:
+                user_friendly_error = "YouTube блокирует автоматическое скачивание этого видео. Попробуйте другое видео."
             else:
                 user_friendly_error = f"Ошибка скачивания: {error_msg[:100]}"
             
@@ -139,8 +152,17 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
         except Exception as db_error:
             logger.error(f"Failed to update task status: {db_error}")
         
-        # Retry with exponential backoff
-        raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries), max_retries=2)
+        # Don't retry if it's a permanent error
+        if any(keyword in str(exc).lower() for keyword in ['unavailable', 'private', 'removed', 'invalid url']):
+            logger.info(f"Permanent error detected for task {task_id}, not retrying: {exc}")
+            raise exc  # Don't retry
+        
+        # Retry with exponential backoff, but limited retries for bot detection
+        max_retries = 1 if "bot detection" in str(exc).lower() else 3
+        countdown = 90 * (2 ** self.request.retries)  # Start with 90 seconds
+        
+        logger.info(f"Scheduling retry {self.request.retries + 1}/{max_retries} for task {task_id} in {countdown} seconds")
+        raise self.retry(exc=exc, countdown=countdown, max_retries=max_retries)
 
 
 @shared_task(base=VideoTask, bind=True)
