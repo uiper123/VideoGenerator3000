@@ -261,7 +261,7 @@ class VideoProcessorMoviePy:
             title,
             fontsize=font_size,
             color=text_color,
-            font=font_path if font_path and os.path.exists(font_path) else 'Arial-Bold',
+            font=font_path if font_path and os.path.exists(font_path) else 'DejaVu-Sans-Bold',
             stroke_color='black',
             stroke_width=2
         ).set_duration(video.duration).set_position(('center', 'top')).set_margin(20)
@@ -281,12 +281,10 @@ class VideoProcessorMoviePy:
             List of subtitle segments
         """
         try:
-            # Use the same subtitle generation as before
+            # Use a static method for subtitle generation to avoid circular dependencies
             from app.video_processing.processor import VideoProcessor
             
-            # Create temporary processor just for subtitle generation
-            temp_processor = VideoProcessor(self.output_dir)
-            subtitles = temp_processor.generate_subtitles_from_audio(video_path, 0, duration)
+            subtitles = VideoProcessor.generate_subtitles_from_audio(video_path, 0, duration)
             
             return subtitles
             
@@ -374,7 +372,7 @@ class VideoProcessorMoviePy:
                 subtitle['text'],
                 fontsize=font_size,
                 color=text_color,
-                font=font_path if font_path and os.path.exists(font_path) else 'Arial-Bold',
+                font=font_path if font_path and os.path.exists(font_path) else 'DejaVu-Sans-Bold',
                 stroke_color='black',
                 stroke_width=2
             ).set_start(subtitle['start']).set_duration(subtitle['end'] - subtitle['start']).set_position(('center', 0.8), relative=True)
@@ -477,44 +475,4 @@ class VideoProcessorMoviePy:
             "1080p": (1080, 1920),  # 9:16 aspect ratio  
             "4k": (2160, 3840)      # 9:16 aspect ratio
         }
-        return resolutions.get(quality, resolutions["1080p"])
-    
-    def get_available_fonts(self) -> Dict[str, str]:
-        """
-        Get available fonts for text rendering.
-        
-        Returns:
-            Dict mapping font names to font file paths
-        """
-        fonts = {}
-        
-        try:
-            # Check for system fonts
-            system_fonts = {
-                "DejaVu Sans Bold": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "Liberation Sans Bold": "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-                "Arial Bold": "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-                "Roboto Bold": "/fonts/Roboto/static/Roboto-Bold.ttf",
-                "Montserrat Bold": "/fonts/Montserrat/static/Montserrat-Bold.ttf",
-                "Rubik Bold": "/fonts/Rubik/static/Rubik-Bold.ttf",
-                "Kaph Regular": "/fonts/Kaph/static/Kaph-Regular.ttf"
-            }
-            
-            for font_name, font_path in system_fonts.items():
-                if os.path.exists(font_path):
-                    fonts[font_name] = font_path
-                    logger.debug(f"Found font: {font_name} at {font_path}")
-                else:
-                    logger.debug(f"Font not found: {font_name} at {font_path}")
-            
-            # Add default fallback
-            if not fonts:
-                fonts["Arial-Bold"] = "Arial-Bold"  # MoviePy built-in
-                logger.warning("No custom fonts found, using MoviePy defaults")
-            
-            logger.info(f"Available fonts: {list(fonts.keys())}")
-            return fonts
-            
-        except Exception as e:
-            logger.error(f"Error getting available fonts: {e}")
-            return {"Arial-Bold": "Arial-Bold"} 
+        return resolutions.get(quality, resolutions["1080p"]) 
