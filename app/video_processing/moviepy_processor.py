@@ -6,6 +6,9 @@ import logging
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 
+# Initialize logger
+logger = logging.getLogger(__name__)
+
 try:
     from moviepy.editor import (
         VideoFileClip, 
@@ -13,21 +16,16 @@ try:
         CompositeVideoClip,
         concatenate_videoclips
     )
-    from moviepy.config import check_for_codec
     MOVIEPY_AVAILABLE = True
 except ImportError as e:
     MOVIEPY_AVAILABLE = False
-    # Log the actual import error to help with debugging
-    logger.error(f"MoviePy not available. ImportError: {e}")
+    logger.warning(f"MoviePy not available. ImportError: {e}. Some features will be disabled.")
 
 from app.config.constants import (
     SHORTS_WIDTH, SHORTS_HEIGHT, SHORTS_FPS,
     MIN_FRAGMENT_DURATION, MAX_FRAGMENT_DURATION,
     DEFAULT_TEXT_STYLES
 )
-
-logger = logging.getLogger(__name__)
-
 
 class VideoProcessorMoviePy:
     """Video processor using MoviePy for better text and subtitle handling."""
