@@ -59,12 +59,8 @@ class VideoDownloader:
         try:
             # Check if URL is YouTube
             if self._is_youtube_url(url):
-                try:
-                    return self._download_youtube(url, quality)
-                except Exception as e:
-                    logger.warning(f"PyTubeFix download failed: {e}")
-                    logger.info("Attempting fallback with yt-dlp...")
-                    return self._download_youtube_ytdlp(url, quality)
+                # Use enhanced strategy with multiple fallbacks
+                return self._download_youtube_enhanced(url, quality)
             else:
                 raise DownloadError(f"Unsupported URL: {url}. Only YouTube is currently supported.")
                 
@@ -107,9 +103,9 @@ class VideoDownloader:
             logger.error(f"ffmpeg error during merge: {e.stderr.decode() if e.stderr else str(e)}")
             raise DownloadError(f"Failed to merge video and audio: {e}")
     
-    def _download_youtube(self, url: str, quality: str) -> Dict[str, Any]:
+    def _download_youtube_enhanced(self, url: str, quality: str) -> Dict[str, Any]:
         """
-        Download video from YouTube using PyTubeFix.
+        Enhanced YouTube download with multiple fallback strategies.
         
         Args:
             url: YouTube URL
@@ -118,30 +114,70 @@ class VideoDownloader:
         Returns:
             Dict with download information
         """
-        try:
-            logger.info(f"Extracting YouTube video info from: {url}")
-            
-            # First try without PO token (more reliable for most cases)
-            yt = None
+        strategies = [
+            {
+                'name': 'yt-dlp_with_cookies',
+                'method': lambda: self._download_youtube_ytdlp(url, quality)
+            },
+            {
+                'name': 'pytubefix_no_token',
+                'method': lambda: self._download_youtube_pytubefix(url, quality, use_po_token=False)
+            },
+            {
+                'name': 'pytubefix_with_token', 
+                'method': lambda: self._download_youtube_pytubefix(url, quality, use_po_token=True)
+            },
+            {
+                'name': 'yt-dlp_basic',
+                'method': lambda: self._try_ytdlp_download(url, quality, [])
+            }
+        ]
+        
+        last_error = None
+        for strategy in strategies:
             try:
-                logger.info("Attempting download without PO token...")
-                yt = YouTube(url, use_oauth=False, allow_oauth_cache=False, use_po_token=False)
-                # Test if we can access basic video info
-                _ = yt.title
-                logger.info("Successfully initialized YouTube object without PO token")
+                logger.info(f"Trying download strategy: {strategy['name']}")
+                result = strategy['method']()
+                logger.info(f"Successfully downloaded using strategy: {strategy['name']}")
+                return result
             except Exception as e:
-                logger.warning(f"Failed without PO token: {e}")
-                try:
-                    logger.info("Attempting download with PO token...")
-                    yt = YouTube(url, use_oauth=False, allow_oauth_cache=False, use_po_token=True)
-                    _ = yt.title
-                    logger.info("Successfully initialized YouTube object with PO token")
-                except Exception as e2:
-                    logger.error(f"Failed with PO token: {e2}")
-                    raise DownloadError(f"Could not initialize YouTube downloader: {e2}")
+                last_error = e
+                logger.warning(f"Strategy '{strategy['name']}' failed: {e}")
+                
+                # Special handling for bot detection
+                if "Sign in to confirm you're not a bot" in str(e) or "bot detection" in str(e).lower():
+                    logger.warning("YouTube bot detection encountered - trying next strategy")
+                    continue
+                    
+                # For other errors, also try next strategy
+                continue
+        
+        # If all strategies failed
+        if last_error:
+            raise DownloadError(f"All download strategies failed. Last error: {last_error}")
+        else:
+            raise DownloadError("All download strategies failed with unknown errors")
+    
+    def _download_youtube_pytubefix(self, url: str, quality: str, use_po_token: bool = False) -> Dict[str, Any]:
+        """
+        Download video from YouTube using PyTubeFix with specific token settings.
+        
+        Args:
+            url: YouTube URL
+            quality: Preferred quality
+            use_po_token: Whether to use PO token
             
-            if not yt:
-                raise DownloadError("Failed to initialize YouTube downloader")
+        Returns:
+            Dict with download information
+        """
+        try:
+            logger.info(f"Extracting YouTube video info from: {url} (use_po_token={use_po_token})")
+            
+            yt = YouTube(url, use_oauth=False, allow_oauth_cache=False, use_po_token=use_po_token)
+            
+            # Test if we can access basic video info
+            _ = yt.title
+            logger.info(f"Successfully initialized YouTube object (use_po_token={use_po_token})")
             
             logger.info(f"Video title: {yt.title}")
             logger.info(f"Video length: {yt.length} seconds")
@@ -281,7 +317,8 @@ class VideoDownloader:
                 'resolution': getattr(stream, 'resolution', 'unknown'),
                 'description': yt.description[:500] if yt.description else '',
                 'author': yt.author or 'Unknown',
-                'views': yt.views or 0
+                'views': yt.views or 0,
+                'thumbnail': getattr(yt, 'thumbnail_url', '')
             }
             
         except VideoUnavailable as e:
@@ -291,14 +328,14 @@ class VideoDownloader:
             logger.error(f"Invalid YouTube URL: {e}")
             raise DownloadError(f"Invalid YouTube URL: {e}")
         except Exception as e:
-            logger.error(f"YouTube download failed: {e}")
+            logger.error(f"PyTubeFix download failed: {e}")
             # Try to provide more specific error information
             if "400" in str(e):
                 raise DownloadError(f"YouTube returned 400 error - video may be restricted or unavailable: {e}")
             elif "403" in str(e):
                 raise DownloadError(f"YouTube returned 403 error - access forbidden: {e}")
             else:
-                raise DownloadError(f"YouTube download failed: {e}")
+                raise DownloadError(f"PyTubeFix download failed: {e}")
     
     def _download_youtube_ytdlp(self, url: str, quality: str) -> Dict[str, Any]:
         """
@@ -314,101 +351,151 @@ class VideoDownloader:
         try:
             logger.info(f"Using yt-dlp to download from: {url}")
             
-            # First, get video info
-            info_cmd = [
-                'yt-dlp',
-                '--no-warnings',
-                '--dump-json',
-                '--no-playlist',
-                url
+            # Try multiple yt-dlp strategies for better success rate
+            strategies = [
+                # Strategy 1: With browser cookies (most effective for bot detection)
+                {
+                    'name': 'with_cookies',
+                    'extra_args': [
+                        '--cookies-from-browser', 'chrome',
+                        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    ]
+                },
+                # Strategy 2: With different user agent and bypass
+                {
+                    'name': 'bypass_bot_detection',
+                    'extra_args': [
+                        '--user-agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        '--sleep-interval', '1',
+                        '--max-sleep-interval', '5'
+                    ]
+                },
+                # Strategy 3: Basic with no special options
+                {
+                    'name': 'basic',
+                    'extra_args': []
+                }
             ]
             
-            logger.info("Getting video information with yt-dlp...")
-            result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=30)
+            for strategy in strategies:
+                try:
+                    logger.info(f"Trying yt-dlp strategy: {strategy['name']}")
+                    return self._try_ytdlp_download(url, quality, strategy['extra_args'])
+                except Exception as e:
+                    logger.warning(f"yt-dlp strategy '{strategy['name']}' failed: {e}")
+                    continue
             
-            if result.returncode != 0:
-                raise DownloadError(f"yt-dlp info extraction failed: {result.stderr}")
+            # If all strategies failed
+            raise DownloadError("All yt-dlp download strategies failed")
             
-            video_info = json.loads(result.stdout)
-            
-            # Check video length (max 3 hours)
-            duration = video_info.get('duration', 0)
-            if duration > 10800:  # 3 hours in seconds
-                raise DownloadError(f"Video too long: {duration} seconds (max 3 hours)")
-            
-            # Set up quality format selector
-            quality_formats = {
-                '4k': 'best[height<=2160]',
-                '1080p': 'best[height<=1080]',
-                '720p': 'best[height<=720]',
-                'best': 'best',
-                'worst': 'worst'
-            }
-            
-            format_selector = quality_formats.get(quality, 'best[height<=1080]')
-            
-            # Generate output filename
-            safe_title = "".join(c for c in video_info.get('title', 'video') if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            output_filename = f"ytdlp_{safe_title[:50]}_{uuid.uuid4().hex[:8]}.%(ext)s"
-            output_path = os.path.join(self.download_dir, output_filename)
-            
-            # Download the video
-            download_cmd = [
-                'yt-dlp',
-                '--no-warnings',
-                '--no-playlist',
-                '--format', format_selector,
-                '--output', output_path,
-                '--merge-output-format', 'mp4',
-                '--write-auto-subs',
-                '--sub-lang', 'en,ru',
-                '--embed-subs',
-                '--max-filesize', '2G',
-                url
-            ]
-            
-            logger.info(f"Downloading video with yt-dlp: {' '.join(download_cmd)}")
-            result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=600)
-            
-            if result.returncode != 0:
-                raise DownloadError(f"yt-dlp download failed: {result.stderr}")
-            
-            # Find the downloaded file
-            downloaded_files = []
-            for file in os.listdir(self.download_dir):
-                if file.startswith('ytdlp_') and file.endswith('.mp4'):
-                    downloaded_files.append(os.path.join(self.download_dir, file))
-            
-            if not downloaded_files:
-                raise DownloadError("Downloaded file not found")
-            
-            # Get the most recent file (in case of multiple)
-            final_video_path = max(downloaded_files, key=os.path.getctime)
-            
-            logger.info(f"yt-dlp download completed: {final_video_path}")
-            
-            return {
-                'title': video_info.get('title', 'Unknown'),
-                'duration': duration,
-                'url': url,
-                'local_path': final_video_path,
-                'file_size': os.path.getsize(final_video_path),
-                'format': 'mp4',
-                'resolution': f"{video_info.get('height', 'unknown')}p",
-                'description': video_info.get('description', '')[:500],
-                'author': video_info.get('uploader', 'Unknown'),
-                'views': video_info.get('view_count', 0)
-            }
-            
-        except subprocess.TimeoutExpired:
-            logger.error("yt-dlp download timed out")
-            raise DownloadError("Download timed out")
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse yt-dlp info: {e}")
-            raise DownloadError(f"Failed to parse video info: {e}")
         except Exception as e:
             logger.error(f"yt-dlp download failed: {e}")
             raise DownloadError(f"yt-dlp download failed: {e}")
+    
+    def _try_ytdlp_download(self, url: str, quality: str, extra_args: list) -> Dict[str, Any]:
+        """
+        Try downloading with specific yt-dlp arguments.
+        
+        Args:
+            url: YouTube URL
+            quality: Preferred quality  
+            extra_args: Additional yt-dlp arguments
+            
+        Returns:
+            Dict with download information
+        """
+        # First, get video info
+        info_cmd = [
+            'yt-dlp',
+            '--no-warnings',
+            '--dump-json',
+            '--no-playlist',
+            '--ignore-errors'
+        ] + extra_args + [url]
+        
+        logger.info("Getting video information with yt-dlp...")
+        result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=60)
+        
+        if result.returncode != 0:
+            error_msg = result.stderr.strip()
+            if "Sign in to confirm you're not a bot" in error_msg:
+                raise DownloadError(f"YouTube bot detection - need authentication: {error_msg}")
+            raise DownloadError(f"yt-dlp info extraction failed: {error_msg}")
+        
+        video_info = json.loads(result.stdout)
+        
+        # Check video length (max 3 hours)
+        duration = video_info.get('duration', 0)
+        if duration > 10800:  # 3 hours in seconds
+            raise DownloadError(f"Video too long: {duration} seconds (max 3 hours)")
+        
+        # Set up quality format selector with better options
+        quality_formats = {
+            '4k': 'bestvideo[height<=2160]+bestaudio/best[height<=2160]',
+            '1080p': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]', 
+            '720p': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
+            'best': 'bestvideo+bestaudio/best',
+            'worst': 'worst'
+        }
+        
+        format_selector = quality_formats.get(quality, 'bestvideo[height<=1080]+bestaudio/best[height<=1080]')
+        
+        # Generate output filename
+        safe_title = "".join(c for c in video_info.get('title', 'video') if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        output_filename = f"ytdlp_{safe_title[:50]}_{uuid.uuid4().hex[:8]}.%(ext)s"
+        output_path = os.path.join(self.download_dir, output_filename)
+        
+        # Download the video with improved options
+        download_cmd = [
+            'yt-dlp',
+            '--no-warnings',
+            '--no-playlist',
+            '--format', format_selector,
+            '--output', output_path,
+            '--merge-output-format', 'mp4',
+            '--max-filesize', '2G',
+            '--retries', '3',
+            '--fragment-retries', '3',
+            '--ignore-errors',
+            '--no-check-certificate'
+        ] + extra_args + [url]
+        
+        logger.info(f"Downloading video with yt-dlp...")
+        result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=900)  # 15 minute timeout
+        
+        if result.returncode != 0:
+            error_msg = result.stderr.strip()
+            if "Sign in to confirm you're not a bot" in error_msg:
+                raise DownloadError(f"YouTube bot detection - authentication required")
+            raise DownloadError(f"yt-dlp download failed: {error_msg}")
+        
+        # Find the downloaded file
+        downloaded_files = []
+        for file in os.listdir(self.download_dir):
+            if file.startswith('ytdlp_') and file.endswith('.mp4'):
+                downloaded_files.append(os.path.join(self.download_dir, file))
+        
+        if not downloaded_files:
+            raise DownloadError("Downloaded file not found")
+        
+        # Get the most recent file (in case of multiple)
+        final_video_path = max(downloaded_files, key=os.path.getctime)
+        
+        logger.info(f"yt-dlp download completed: {final_video_path}")
+        
+        return {
+            'title': video_info.get('title', 'Unknown'),
+            'duration': duration,
+            'url': url,
+            'local_path': final_video_path,
+            'file_size': os.path.getsize(final_video_path),
+            'format': 'mp4',
+            'resolution': f"{video_info.get('height', 'unknown')}p",
+            'description': video_info.get('description', '')[:500],
+            'author': video_info.get('uploader', 'Unknown'),
+            'views': video_info.get('view_count', 0),
+            'thumbnail': video_info.get('thumbnail', '')
+        }
     
     def _select_best_stream(self, streams, quality: str):
         """

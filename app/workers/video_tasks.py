@@ -63,8 +63,45 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
         # Initialize downloader
         downloader = VideoDownloader(download_dir)
         
-        # Download video
-        download_result = downloader.download(url, quality)
+        try:
+            # Download video with enhanced error handling
+            logger.info(f"Attempting to download video from {url}")
+            download_result = downloader.download(url, quality)
+            logger.info(f"Download successful for task {task_id}")
+            
+        except Exception as download_error:
+            # Enhanced error handling for different types of download failures
+            error_msg = str(download_error)
+            logger.error(f"Download error for task {task_id}: {error_msg}")
+            
+            # Categorize the error for better user feedback
+            if "Sign in to confirm you're not a bot" in error_msg or "bot detection" in error_msg.lower():
+                user_friendly_error = "YouTube требует подтверждения. Попробуйте другое видео или попробуйте позже."
+            elif "Video unavailable" in error_msg:
+                user_friendly_error = "Видео недоступно. Проверьте ссылку или попробуйте другое видео."
+            elif "Video too long" in error_msg:
+                user_friendly_error = "Видео слишком длинное (максимум 3 часа)."
+            elif "Video too large" in error_msg:
+                user_friendly_error = "Видео слишком большое (максимум 2GB)."
+            elif "Invalid YouTube URL" in error_msg:
+                user_friendly_error = "Некорректная ссылка на YouTube."
+            elif "timeout" in error_msg.lower():
+                user_friendly_error = "Превышено время ожидания при скачивании."
+            elif "403" in error_msg or "forbidden" in error_msg.lower():
+                user_friendly_error = "Доступ к видео ограничен."
+            else:
+                user_friendly_error = f"Ошибка скачивания: {error_msg[:100]}"
+            
+            # Update task with user-friendly error
+            with get_sync_db_session() as session:
+                task = session.get(VideoTaskModel, task_id)
+                if task:
+                    task.status = VideoStatus.FAILED
+                    task.error_message = user_friendly_error
+                    session.commit()
+            
+            # Re-raise with original error for retry logic
+            raise download_error
         
         # Update task with metadata
         with get_sync_db_session() as session:
@@ -76,7 +113,7 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
                     "size_bytes": download_result["file_size"],
                     "format": download_result["format"],
                     "resolution": download_result["resolution"],
-                    "fps": 30,  # Default FPS for PyTube
+                    "fps": 30,  # Default FPS
                     "thumbnail": download_result.get("thumbnail"),
                     "description": download_result.get("description", ""),
                     "uploader": download_result.get("author", "")
@@ -90,15 +127,20 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
     except Exception as exc:
         logger.error(f"Video download failed for task {task_id}: {exc}")
         
-        # Update task status to failed
-        with get_sync_db_session() as session:
-            task = session.get(VideoTaskModel, task_id)
-            if task:
-                task.status = VideoStatus.FAILED
-                task.error_message = str(exc)
-                session.commit()
+        # Update task status to failed if not already updated
+        try:
+            with get_sync_db_session() as session:
+                task = session.get(VideoTaskModel, task_id)
+                if task and task.status != VideoStatus.FAILED:
+                    task.status = VideoStatus.FAILED
+                    if not task.error_message:  # Only set if not already set above
+                        task.error_message = str(exc)[:200]  # Limit error message length
+                    session.commit()
+        except Exception as db_error:
+            logger.error(f"Failed to update task status: {db_error}")
         
-        raise self.retry(exc=exc, countdown=60, max_retries=3)
+        # Retry with exponential backoff
+        raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries), max_retries=2)
 
 
 @shared_task(base=VideoTask, bind=True)
