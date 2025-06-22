@@ -16,6 +16,7 @@ redis==5.0.1
 
 # Video processing
 pytubefix==9.2.0
+yt-dlp==2024.12.13
 ffmpeg-python==0.2.0
 moviepy==2.0.0.dev2
 imageio==2.34.0

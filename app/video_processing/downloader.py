@@ -3,6 +3,8 @@ Video downloader using PyTube for YouTube and other sources.
 """
 import os
 import logging
+import subprocess
+import json
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 import ffmpeg
@@ -57,7 +59,12 @@ class VideoDownloader:
         try:
             # Check if URL is YouTube
             if self._is_youtube_url(url):
-                return self._download_youtube(url, quality)
+                try:
+                    return self._download_youtube(url, quality)
+                except Exception as e:
+                    logger.warning(f"PyTubeFix download failed: {e}")
+                    logger.info("Attempting fallback with yt-dlp...")
+                    return self._download_youtube_ytdlp(url, quality)
             else:
                 raise DownloadError(f"Unsupported URL: {url}. Only YouTube is currently supported.")
                 
@@ -114,8 +121,27 @@ class VideoDownloader:
         try:
             logger.info(f"Extracting YouTube video info from: {url}")
             
-            # Create YouTube object with better error handling
-            yt = YouTube(url, use_oauth=False, allow_oauth_cache=False, use_po_token=True)
+            # First try without PO token (more reliable for most cases)
+            yt = None
+            try:
+                logger.info("Attempting download without PO token...")
+                yt = YouTube(url, use_oauth=False, allow_oauth_cache=False, use_po_token=False)
+                # Test if we can access basic video info
+                _ = yt.title
+                logger.info("Successfully initialized YouTube object without PO token")
+            except Exception as e:
+                logger.warning(f"Failed without PO token: {e}")
+                try:
+                    logger.info("Attempting download with PO token...")
+                    yt = YouTube(url, use_oauth=False, allow_oauth_cache=False, use_po_token=True)
+                    _ = yt.title
+                    logger.info("Successfully initialized YouTube object with PO token")
+                except Exception as e2:
+                    logger.error(f"Failed with PO token: {e2}")
+                    raise DownloadError(f"Could not initialize YouTube downloader: {e2}")
+            
+            if not yt:
+                raise DownloadError("Failed to initialize YouTube downloader")
             
             logger.info(f"Video title: {yt.title}")
             logger.info(f"Video length: {yt.length} seconds")
@@ -274,6 +300,116 @@ class VideoDownloader:
             else:
                 raise DownloadError(f"YouTube download failed: {e}")
     
+    def _download_youtube_ytdlp(self, url: str, quality: str) -> Dict[str, Any]:
+        """
+        Download video from YouTube using yt-dlp as fallback.
+        
+        Args:
+            url: YouTube URL
+            quality: Preferred quality
+            
+        Returns:
+            Dict with download information
+        """
+        try:
+            logger.info(f"Using yt-dlp to download from: {url}")
+            
+            # First, get video info
+            info_cmd = [
+                'yt-dlp',
+                '--no-warnings',
+                '--dump-json',
+                '--no-playlist',
+                url
+            ]
+            
+            logger.info("Getting video information with yt-dlp...")
+            result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode != 0:
+                raise DownloadError(f"yt-dlp info extraction failed: {result.stderr}")
+            
+            video_info = json.loads(result.stdout)
+            
+            # Check video length (max 3 hours)
+            duration = video_info.get('duration', 0)
+            if duration > 10800:  # 3 hours in seconds
+                raise DownloadError(f"Video too long: {duration} seconds (max 3 hours)")
+            
+            # Set up quality format selector
+            quality_formats = {
+                '4k': 'best[height<=2160]',
+                '1080p': 'best[height<=1080]',
+                '720p': 'best[height<=720]',
+                'best': 'best',
+                'worst': 'worst'
+            }
+            
+            format_selector = quality_formats.get(quality, 'best[height<=1080]')
+            
+            # Generate output filename
+            safe_title = "".join(c for c in video_info.get('title', 'video') if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            output_filename = f"ytdlp_{safe_title[:50]}_{uuid.uuid4().hex[:8]}.%(ext)s"
+            output_path = os.path.join(self.download_dir, output_filename)
+            
+            # Download the video
+            download_cmd = [
+                'yt-dlp',
+                '--no-warnings',
+                '--no-playlist',
+                '--format', format_selector,
+                '--output', output_path,
+                '--merge-output-format', 'mp4',
+                '--write-auto-subs',
+                '--sub-lang', 'en,ru',
+                '--embed-subs',
+                '--max-filesize', '2G',
+                url
+            ]
+            
+            logger.info(f"Downloading video with yt-dlp: {' '.join(download_cmd)}")
+            result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=600)
+            
+            if result.returncode != 0:
+                raise DownloadError(f"yt-dlp download failed: {result.stderr}")
+            
+            # Find the downloaded file
+            downloaded_files = []
+            for file in os.listdir(self.download_dir):
+                if file.startswith('ytdlp_') and file.endswith('.mp4'):
+                    downloaded_files.append(os.path.join(self.download_dir, file))
+            
+            if not downloaded_files:
+                raise DownloadError("Downloaded file not found")
+            
+            # Get the most recent file (in case of multiple)
+            final_video_path = max(downloaded_files, key=os.path.getctime)
+            
+            logger.info(f"yt-dlp download completed: {final_video_path}")
+            
+            return {
+                'title': video_info.get('title', 'Unknown'),
+                'duration': duration,
+                'url': url,
+                'local_path': final_video_path,
+                'file_size': os.path.getsize(final_video_path),
+                'format': 'mp4',
+                'resolution': f"{video_info.get('height', 'unknown')}p",
+                'description': video_info.get('description', '')[:500],
+                'author': video_info.get('uploader', 'Unknown'),
+                'views': video_info.get('view_count', 0)
+            }
+            
+        except subprocess.TimeoutExpired:
+            logger.error("yt-dlp download timed out")
+            raise DownloadError("Download timed out")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse yt-dlp info: {e}")
+            raise DownloadError(f"Failed to parse video info: {e}")
+        except Exception as e:
+            logger.error(f"yt-dlp download failed: {e}")
+            raise DownloadError(f"yt-dlp download failed: {e}")
+    
     def _select_best_stream(self, streams, quality: str):
         """
         Select the best stream based on quality preference.
@@ -317,22 +453,68 @@ class VideoDownloader:
         """
         try:
             if self._is_youtube_url(url):
-                yt = YouTube(url)
-                return {
-                    'title': yt.title,
-                    'duration': yt.length,
-                    'description': yt.description[:500] if yt.description else '',
-                    'author': yt.author or 'Unknown',
-                    'views': yt.views or 0,
-                    'thumbnail': yt.thumbnail_url,
-                    'url': url
-                }
+                # Try PyTubeFix first, then fallback to yt-dlp
+                try:
+                    yt = YouTube(url, use_oauth=False, allow_oauth_cache=False, use_po_token=False)
+                    return {
+                        'title': yt.title,
+                        'duration': yt.length,
+                        'description': yt.description[:500] if yt.description else '',
+                        'author': yt.author or 'Unknown',
+                        'views': yt.views or 0,
+                        'thumbnail': yt.thumbnail_url,
+                        'url': url
+                    }
+                except Exception as e:
+                    logger.warning(f"PyTubeFix info extraction failed: {e}")
+                    logger.info("Attempting info extraction with yt-dlp...")
+                    return self._get_video_info_ytdlp(url)
             else:
                 raise DownloadError("Unsupported URL for info extraction")
                 
         except Exception as e:
             logger.error(f"Failed to get video info: {e}")
             raise DownloadError(f"Failed to get video info: {e}")
+    
+    def _get_video_info_ytdlp(self, url: str) -> Dict[str, Any]:
+        """
+        Get video information using yt-dlp as fallback.
+        
+        Args:
+            url: Video URL
+            
+        Returns:
+            Dict with video information
+        """
+        try:
+            info_cmd = [
+                'yt-dlp',
+                '--no-warnings',
+                '--dump-json',
+                '--no-playlist',
+                url
+            ]
+            
+            result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode != 0:
+                raise DownloadError(f"yt-dlp info extraction failed: {result.stderr}")
+            
+            video_info = json.loads(result.stdout)
+            
+            return {
+                'title': video_info.get('title', 'Unknown'),
+                'duration': video_info.get('duration', 0),
+                'description': video_info.get('description', '')[:500],
+                'author': video_info.get('uploader', 'Unknown'),
+                'views': video_info.get('view_count', 0),
+                'thumbnail': video_info.get('thumbnail', ''),
+                'url': url
+            }
+            
+        except Exception as e:
+            logger.error(f"yt-dlp info extraction failed: {e}")
+            raise DownloadError(f"yt-dlp info extraction failed: {e}")
     
     def cleanup_file(self, file_path: str) -> bool:
         """
