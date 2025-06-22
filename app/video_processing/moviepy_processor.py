@@ -147,7 +147,9 @@ class VideoProcessorMoviePy:
                 temp_audiofile='temp-audio.m4a',
                 remove_temp=True,
                 verbose=False,
-                logger=None  # Disable MoviePy's verbose logging
+                logger=None,  # Disable MoviePy's verbose logging
+                preset='ultrafast',
+                threads=4
             )
             
             # Clean up
@@ -439,7 +441,9 @@ class VideoProcessorMoviePy:
                     temp_audiofile=f'temp-audio-{i}.m4a',
                     remove_temp=True,
                     verbose=False,
-                    logger=None
+                    logger=None,
+                    preset='ultrafast',
+                    threads=4
                 )
                 
                 fragment_clip.close()
