@@ -92,25 +92,11 @@ class VideoProcessorMoviePy:
         enable_subtitles: bool = True
     ) -> Dict[str, Any]:
         """
-        Process video with MoviePy: add title, subtitles, convert to shorts format, then fragment.
-        
-        Args:
-            video_path: Path to input video
-            fragment_duration: Duration of each fragment in seconds
-            quality: Output quality
-            title: Title to display
-            title_color: Color for title
-            title_size: Size for title
-            subtitle_color: Color for subtitles
-            subtitle_size: Size for subtitles
-            font_path: Path to custom font
-            enable_subtitles: Whether to add subtitles
-            
-        Returns:
-            Dict with processing results and fragments
+        Process video with MoviePy and FFmpeg: add title, subtitles, convert to shorts format, then fragment.
+        This version uses a highly optimized subtitle workflow.
         """
         try:
-            logger.info("Starting MoviePy video processing...")
+            logger.info("Starting optimized video processing...")
             
             # Load video
             video = VideoFileClip(video_path)
@@ -126,61 +112,67 @@ class VideoProcessorMoviePy:
                 processed_video = self._add_title(processed_video, title, title_color, title_size, font_path)
                 logger.info(f"Added title: {title}")
             
-            # Generate and add subtitles if enabled
-            if enable_subtitles and video.audio is not None:
-                subtitles = self._generate_subtitles_moviepy(video_path, video.duration)
-                if subtitles:
-                    processed_video = self._add_subtitles_moviepy(
-                        processed_video, subtitles, subtitle_color, subtitle_size, font_path
-                    )
-                    logger.info(f"Added {len(subtitles)} subtitle segments")
-                else:
-                    logger.warning("No subtitles generated")
-            
-            # Save processed full video
-            processed_video_path = os.path.join(self.output_dir, "processed_full_video.mp4")
-            logger.info("Saving processed full video...")
-            
+            # Save the video with title but without subtitles to a temporary path.
+            # This is done first because subtitle burning is now a separate, final step.
+            temp_video_path = os.path.join(self.output_dir, f"temp_{uuid.uuid4().hex[:8]}.mp4")
+            logger.info(f"Saving temporary video to: {temp_video_path}")
             try:
                 processed_video.write_videofile(
-                    processed_video_path,
+                    temp_video_path,
                     fps=SHORTS_FPS,
                     codec='libx264',
                     audio_codec='aac',
-                    temp_audiofile=f'/tmp/temp-audio-full-{uuid.uuid4().hex[:8]}.m4a',
+                    temp_audiofile=f'/tmp/temp-audio-intermediate-{uuid.uuid4().hex[:8]}.m4a',
                     remove_temp=True,
-                    logger=None,  # Disable MoviePy's verbose logging
+                    logger=None,
                     preset='ultrafast',
                     threads=2
                 )
             except Exception as e:
-                logger.warning(f"First attempt to save full video failed: {e}")
-                # Try without audio if audio processing fails
-                try:
-                    if processed_video.audio is not None:
-                        processed_video = processed_video.without_audio()
-                    processed_video.write_videofile(
-                        processed_video_path,
-                        fps=SHORTS_FPS,
-                        codec='libx264',
-                        temp_audiofile=None,
-                        audio=False,
-                        remove_temp=True,
-                        logger=None,
-                        preset='ultrafast',
-                        threads=2
-                    )
-                    logger.warning("Full video saved without audio due to processing error")
-                except Exception as e2:
-                    logger.error(f"Failed to save full video even without audio: {e2}")
-                    raise RuntimeError(f"Could not save processed video: {e2}")
+                logger.error(f"Failed to save intermediate video: {e}")
+                raise RuntimeError(f"Could not save intermediate video: {e}")
+
+            processed_video_path = temp_video_path
+
+            # Generate and burn subtitles if enabled
+            if enable_subtitles and video.audio is not None:
+                subtitles = self._generate_subtitles_moviepy(video_path, video.duration)
+                if subtitles:
+                    srt_path = os.path.join(self.output_dir, f"subs_{uuid.uuid4().hex[:8]}.srt")
+                    final_video_path = os.path.join(self.output_dir, "processed_full_video.mp4")
+                    
+                    try:
+                        self._generate_srt_file(subtitles, srt_path)
+                        logger.info(f"Burning {len(subtitles)} subtitles using FFmpeg...")
+                        
+                        self._burn_subtitles_with_ffmpeg(
+                            video_path=temp_video_path,
+                            srt_path=srt_path,
+                            output_path=final_video_path,
+                            font_path=font_path,
+                            video_height=processed_video.h
+                        )
+                        processed_video_path = final_video_path
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to generate or burn subtitles: {e}. Using video without subtitles as fallback.")
+                        # The temp_video_path (without subs) will be used
+                    finally:
+                        # Cleanup SRT file
+                        if os.path.exists(srt_path):
+                            os.remove(srt_path)
+                        # Cleanup temp video if final video was created
+                        if processed_video_path == final_video_path and os.path.exists(temp_video_path):
+                            os.remove(temp_video_path)
+                else:
+                    logger.warning("No subtitles were generated.")
             
-            # Clean up
+            # Clean up MoviePy objects
             video.close()
             processed_video.close()
             
             # Cut into fragments
-            logger.info("Creating fragments...")
+            logger.info("Creating fragments from final video...")
             fragments = self._create_fragments_moviepy(processed_video_path, fragment_duration, title)
             
             return {
@@ -392,6 +384,97 @@ class VideoProcessorMoviePy:
             logger.info("Generated 10 simple subtitle segments")
             return self._generate_simple_subtitles(duration)
     
+    def _generate_srt_file(self, subtitles: List[Dict[str, Any]], srt_path: str):
+        """Generates an SRT subtitle file from subtitle data."""
+        def to_srt_time(seconds: float) -> str:
+            """Converts seconds to SRT time format (HH:MM:SS,ms)."""
+            if seconds < 0: seconds = 0
+            millis = int((seconds % 1) * 1000)
+            seconds = int(seconds)
+            minutes, seconds = divmod(seconds, 60)
+            hours, minutes = divmod(minutes, 60)
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d},{millis:03d}"
+
+        with open(srt_path, 'w', encoding='utf-8') as f:
+            for i, sub in enumerate(subtitles):
+                f.write(f"{i + 1}\n")
+                f.write(f"{to_srt_time(sub['start'])} --> {to_srt_time(sub['end'])}\n")
+                f.write(f"{sub['text'].strip()}\n\n")
+        logger.info(f"Generated SRT file at: {srt_path}")
+
+    def _burn_subtitles_with_ffmpeg(
+        self,
+        video_path: str,
+        srt_path: str,
+        output_path: str,
+        font_path: str = None,
+        video_height: int = 1920
+    ) -> str:
+        """Burns subtitles into a video file using FFmpeg for high performance."""
+        logger.info(f"Burning subtitles into {video_path} using FFmpeg...")
+
+        # Determine font to use for subtitles
+        if font_path and os.path.exists(font_path):
+            font_dir_for_ffmpeg = os.path.dirname(os.path.abspath(font_path))
+            font_name_for_style = os.path.splitext(os.path.basename(font_path))[0]
+        else:
+            kaph_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
+            if os.path.exists(kaph_path):
+                font_dir_for_ffmpeg = "/app/fonts/Kaph/static"
+                font_name_for_style = "Kaph-Regular"
+            else: # Fallback to DejaVu
+                font_dir_for_ffmpeg = "/usr/share/fonts/truetype/dejavu"
+                font_name_for_style = "DejaVu Sans"
+
+        # Sanitize paths for FFmpeg's vf_subtitles filter
+        sanitized_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
+        sanitized_font_dir = font_dir_for_ffmpeg.replace('\\', '/').replace(':', '\\:')
+        
+        # Dynamic font size based on video height
+        font_size = int(video_height * 0.03) # 3% of video height for better fit
+
+        # Style for subtitles: White text, with a semi-transparent black box for readability, centered at the bottom.
+        # PrimaryColour is in &HBBGGRR format. White is &HFFFFFF.
+        # BackColour is &HAABBGGRR format. ~56% transparent black is &H90000000.
+        # BorderStyle=3 includes a background box. Alignment=2 is bottom-center.
+        style_string = (
+            f"FontName='{font_name_for_style}',"
+            f"FontSize={font_size},"
+            f"PrimaryColour=&HFFFFFF,"
+            f"BorderStyle=3,"
+            f"BackColour=&H90000000,"
+            f"OutlineColour=&H90000000,"
+            f"Alignment=2,"
+            f"MarginV=40" # 40 pixels from the bottom
+        )
+
+        video_filter = f"subtitles='{sanitized_srt_path}':fontsdir='{sanitized_font_dir}':force_style='{style_string}'"
+        
+        cmd = [
+            'ffmpeg',
+            '-i', video_path,
+            '-vf', video_filter,
+            '-c:a', 'copy',
+            '-c:v', 'libx264',
+            '-preset', 'veryfast', # A good balance of speed and quality
+            '-crf', '23',
+            '-y',
+            output_path
+        ]
+
+        try:
+            logger.info(f"Executing FFmpeg command for subtitle burn...")
+            # Use a higher timeout because subtitle burning can be slow on shared CPUs
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=1800) # 30 min timeout
+            logger.info(f"Successfully burned subtitles. Output: {output_path}")
+            return output_path
+        except subprocess.CalledProcessError as e:
+            logger.error(f"FFmpeg subtitle burning failed. STDOUT: {e.stdout}. STDERR: {e.stderr}")
+            raise RuntimeError(f"FFmpeg failed while burning subtitles: {e.stderr}")
+        except subprocess.TimeoutExpired:
+            logger.error("FFmpeg subtitle burning timed out.")
+            raise RuntimeError("FFmpeg subtitle burning timed out.")
+
     def _generate_simple_subtitles(self, duration: float) -> List[Dict[str, Any]]:
         """Generate simple demo subtitles."""
         subtitles = []
@@ -420,80 +503,6 @@ class VideoProcessorMoviePy:
             })
         
         return subtitles
-    
-    def _add_subtitles_moviepy(
-        self, 
-        video: VideoFileClip, 
-        subtitles: List[Dict[str, Any]], 
-        color: str, 
-        size: str, 
-        font_path: str = None
-    ) -> VideoFileClip:
-        """
-        Add subtitles to video using MoviePy.
-        
-        Args:
-            video: Input video clip
-            subtitles: List of subtitle segments
-            color: Text color
-            size: Text size
-            font_path: Path to custom font
-            
-        Returns:
-            Video with subtitles
-        """
-        # Get color and size
-        color_map = {
-            'white': 'white',
-            'red': 'red',
-            'blue': 'blue',
-            'yellow': 'yellow',
-            'green': 'green',
-            'orange': 'orange',
-            'purple': 'purple',
-            'pink': 'pink'
-        }
-        text_color = color_map.get(color, 'white')
-        
-        size_map = {
-            'small': int(video.h * 0.035),
-            'medium': int(video.h * 0.045),
-            'large': int(video.h * 0.055),
-            'extra_large': int(video.h * 0.065)
-        }
-        font_size = size_map.get(size, size_map['medium'])
-        
-        # Determine font to use
-        if font_path and os.path.exists(font_path):
-            font_name = font_path
-        else:
-            # Try Kaph font as fallback
-            kaph_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
-            if os.path.exists(kaph_path):
-                font_name = kaph_path
-            else:
-                font_name = 'DejaVu-Sans-Bold'
-        
-        logger.info(f"Using font for subtitles: {font_name}")
-        
-        # Create subtitle clips
-        subtitle_clips = []
-        
-        for subtitle in subtitles:
-            subtitle_clip = TextClip(
-                subtitle['text'],
-                fontsize=font_size,
-                color=text_color,
-                font=font_name,
-                stroke_color='black',
-                stroke_width=2
-            ).set_start(subtitle['start']).set_duration(subtitle['end'] - subtitle['start']).set_position(('center', 0.8), relative=True)
-            
-            subtitle_clips.append(subtitle_clip)
-        
-        # Composite all clips
-        all_clips = [video] + subtitle_clips
-        return CompositeVideoClip(all_clips)
     
     def _create_fragments_moviepy(self, processed_video_path: str, fragment_duration: int, title: str) -> List[Dict[str, Any]]:
         """
@@ -525,94 +534,87 @@ class VideoProcessorMoviePy:
             for i in range(num_fragments):
                 start_time = i * fragment_duration
                 
+                # Calculate end time for this fragment
                 if i == num_fragments - 1:
                     # Last fragment - use remaining duration
+                    end_time = total_duration
                     actual_duration = total_duration - start_time
                 else:
-                    # Regular fragment - use exact duration
-                    actual_duration = min(fragment_duration, total_duration - start_time)
+                    end_time = start_time + fragment_duration
+                    actual_duration = fragment_duration
                 
                 # Skip fragments that are too short
                 if actual_duration < 5:
                     continue
                 
-                # Create fragment
-                fragment_clip = video.subclip(start_time, start_time + actual_duration)
-                
-                fragment_filename = f"fragment_{i+1:03d}.mp4"
+                fragment_filename = f"fragment_{i+1:03d}_{title.replace(' ', '_')[:20]}.mp4"
                 fragment_path = os.path.join(self.output_dir, fragment_filename)
                 
-                # Save fragment with more robust error handling
+                # Cut fragment
+                fragment_clip = video.subclip(start_time, end_time)
+                
+                # Save fragment
                 try:
                     fragment_clip.write_videofile(
                         fragment_path,
                         fps=SHORTS_FPS,
                         codec='libx264',
                         audio_codec='aac',
-                        temp_audiofile=f'/tmp/temp-audio-{i}-{uuid.uuid4().hex[:8]}.m4a',
+                        temp_audiofile=f'/tmp/temp-audio-frag-{uuid.uuid4().hex[:8]}.m4a',
                         remove_temp=True,
                         logger=None,
-                        preset='ultrafast',
-                        threads=2,  # Reduce threads to avoid resource conflicts
-                        verbose=False,
-                        write_logfile=False
+                        preset='ultrafast'
                     )
                 except Exception as e:
-                    logger.warning(f"First attempt failed for fragment {i+1}: {e}")
-                    # Try without audio if audio processing fails
-                    try:
-                        if fragment_clip.audio is not None:
-                            fragment_clip = fragment_clip.without_audio()
-                        fragment_clip.write_videofile(
-                            fragment_path,
-                            fps=SHORTS_FPS,
-                            codec='libx264',
-                            temp_audiofile=None,
-                            audio=False,
-                            remove_temp=True,
-                            logger=None,
-                            preset='ultrafast',
-                            threads=2,
-                            verbose=False,
-                            write_logfile=False
-                        )
-                        logger.warning(f"Fragment {i+1} saved without audio due to processing error")
-                    except Exception as e2:
-                        logger.error(f"Failed to save fragment {i+1} even without audio: {e2}")
-                        fragment_clip.close()
-                        continue
+                    logger.warning(f"Failed to save fragment {i+1}: {e}")
+                    # Try without audio as a fallback
+                    fragment_clip.write_videofile(
+                        fragment_path,
+                        fps=SHORTS_FPS,
+                        codec='libx264',
+                        audio=False,
+                        temp_audiofile=None,
+                        remove_temp=True,
+                        logger=None,
+                        preset='ultrafast'
+                    )
+                
+                # Get fragment info
+                if os.path.exists(fragment_path):
+                    fragments.append({
+                        'fragment_number': i + 1,
+                        'filename': fragment_filename,
+                        'local_path': fragment_path,
+                        'duration': actual_duration,
+                        'start_time': start_time,
+                        'size_bytes': os.path.getsize(fragment_path),
+                        'resolution': f"{fragment_clip.w}x{fragment_clip.h}",
+                        'fps': SHORTS_FPS
+                    })
                 
                 fragment_clip.close()
-                
-                # Get file info
-                file_size = os.path.getsize(fragment_path)
-                
-                fragment_info = {
-                    'fragment_number': i + 1,
-                    'filename': fragment_filename,
-                    'local_path': fragment_path,
-                    'start_time': start_time,
-                    'duration': actual_duration,
-                    'size_bytes': file_size,
-                    'title': f"{title} - Часть {i+1}" if title else f"Фрагмент {i+1}"
-                }
-                
-                fragments.append(fragment_info)
-                logger.info(f"Created fragment {i+1}/{num_fragments}: {fragment_filename}")
             
             video.close()
+            return fragments
             
         except Exception as e:
             logger.error(f"Failed to create fragments: {e}")
-            raise
-        
-        return fragments
+            return fragments
     
     def _get_output_resolution(self, quality: str) -> Tuple[int, int]:
-        """Get output resolution based on quality setting."""
-        resolutions = {
-            "720p": (720, 1280),    # 9:16 aspect ratio
-            "1080p": (1080, 1920),  # 9:16 aspect ratio  
-            "4k": (2160, 3840)      # 9:16 aspect ratio
+        """
+        Get output resolution based on quality setting.
+        
+        Args:
+            quality: Quality setting (720p, 1080p, 4k)
+            
+        Returns:
+            Tuple of (width, height)
+        """
+        quality_map = {
+            '720p': (720, 1280),   
+            '1080p': (1080, 1920),  
+            '4k': (2160, 3840),    
         }
-        return resolutions.get(quality, resolutions["1080p"]) 
+        
+        return quality_map.get(quality, (SHORTS_WIDTH, SHORTS_HEIGHT)) 
