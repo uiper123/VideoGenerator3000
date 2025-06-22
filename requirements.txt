@@ -28,7 +28,7 @@ google-auth-oauthlib==1.2.1
 google-cloud-storage==2.18.0
 
 # Image processing
-pillow==11.0.0
+pillow==9.5.0
 
 # Configuration
 python-dotenv==1.0.1
