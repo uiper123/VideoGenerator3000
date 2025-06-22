@@ -20,7 +20,6 @@ from app.bot.keyboards.font_keyboards import (
 from app.video_processing.processor import VideoProcessor
 from app.config.constants import UserRole
 from app.services.user_settings import UserSettingsService
-from app.bot.handlers.settings_handlers import show_style_settings
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -278,6 +277,7 @@ async def use_selected_font(callback: CallbackQuery, callback_data: FontAction, 
             # Now, we want to return to the style settings menu.
             # To do this, we can call the handler from settings_handlers.
             # We need to make sure the state is correctly managed.
+            from app.bot.handlers.settings_handlers import show_style_settings
             await show_style_settings(callback, state)
             
         else:

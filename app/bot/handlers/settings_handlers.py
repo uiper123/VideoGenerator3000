@@ -19,7 +19,6 @@ from app.bot.keyboards.main_menu import (
     get_size_settings_keyboard
 )
 from app.bot.keyboards.font_keyboards import FontAction
-from app.bot.handlers.font_handlers import show_font_selection
 from app.config.constants import MENU_EMOJIS
 from app.database.connection import get_db_session
 from app.database.models import User
@@ -245,6 +244,7 @@ async def open_font_settings(callback: CallbackQuery, state: FSMContext) -> None
     # To do this cleanly, we can use a dispatcher instance if available
     # or just inform the user. For now, let's just send a message.
     # A better way would be to refactor this to use a shared service or router.
+    from app.bot.handlers.font_handlers import show_font_selection
     await callback.message.answer("Переход в меню выбора шрифтов...")
     # This simulates a user command to open the font menu
     # Note: This is a simplified approach.
