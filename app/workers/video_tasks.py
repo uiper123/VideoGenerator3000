@@ -13,12 +13,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.workers.celery_app import VideoTask
-from app.config.constants import VideoStatus
+from app.config.constants import VideoStatus, DEFAULT_TEXT_STYLES
 from app.config.settings import settings
 from app.database.models import VideoTask as VideoTaskModel, VideoFragment, User
 from app.video_processing.downloader import VideoDownloader
 from app.video_processing.processor import VideoProcessor
-from app.video_processing.moviepy_processor import VideoProcessorMoviePy
 
 logger = logging.getLogger(__name__)
 
