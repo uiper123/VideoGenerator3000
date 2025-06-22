@@ -340,7 +340,8 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 send_completion_notification.apply_async(args=[task.user_id, task_id, len(fragments)])
         
         # Cleanup temporary files
-        cleanup_temp_files([download_result["local_path"], processed_video_path])
+        logger.info(f"Step 5/5: Cleaning up temporary files for task {task_id}")
+        cleanup_temp_files([download_result["local_path"]] + [f["local_path"] for f in fragments])
         
         result = {
             "task_id": task_id,
@@ -357,7 +358,8 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         return result
         
     except Exception as exc:
-        logger.error(f"Optimized video processing chain failed for task {task_id}: {exc}")
+        task_logger = get_task_logger(__name__)
+        task_logger.error(f"Optimized video processing chain failed for task {task_id}: {exc}", exc_info=True)
         
         # Update task status to failed
         with get_sync_db_session() as session:
@@ -367,7 +369,8 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 task.error_message = str(exc)
                 session.commit()
         
-        raise
+        # Retry the task with a backoff strategy
+        raise self.retry(exc=exc, countdown=2 ** self.request.retries, max_retries=5)
 
 
 def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, Any]) -> Dict[str, Any]:

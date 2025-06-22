@@ -20,6 +20,7 @@ from app.bot.keyboards.font_keyboards import (
 from app.video_processing.processor import VideoProcessor
 from app.config.constants import UserRole
 from app.services.user_settings import UserSettingsService
+from app.bot.handlers.settings_handlers import show_style_settings
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -248,7 +249,7 @@ async def back_to_fonts(callback: CallbackQuery, callback_data: FontAction, stat
 @router.callback_query(FontAction.filter(F.action == "use_font"), FontStates.selecting_font)
 async def use_selected_font(callback: CallbackQuery, callback_data: FontAction, state: FSMContext) -> None:
     """
-    Use selected font for video processing.
+    Save the selected font to user settings.
     
     Args:
         callback: Callback query
@@ -256,112 +257,59 @@ async def use_selected_font(callback: CallbackQuery, callback_data: FontAction, 
         state: FSM context
     """
     try:
-        user_id = callback.from_user.id
-        logger.info(f"User {user_id} clicked 'Use font' button")
-        
-        # Get state data
         data = await state.get_data()
         font_name = data.get('selected_font_name')
-        font_path = data.get('selected_font_path')
         
-        logger.info(f"Font data from state: name={font_name}, path={font_path}")
-        
-        if not font_path:
-            logger.warning(f"No font path in state for user {user_id}")
-            await callback.answer("❌ Сначала выберите шрифт", show_alert=True)
+        if not font_name:
+            await callback.answer("❌ Шрифт не выбран.", show_alert=True)
             return
-        
-        # Save font to user settings for both title and subtitle
-        logger.info(f"Saving font '{font_name}' to user {user_id} settings")
-        title_success = await UserSettingsService.set_style_setting(user_id, 'title_style', 'font', font_name)
-        logger.info(f"Title font save result: {title_success}")
-        subtitle_success = await UserSettingsService.set_style_setting(user_id, 'subtitle_style', 'font', font_name)
-        logger.info(f"Subtitle font save result: {subtitle_success}")
-        
-        if title_success and subtitle_success:
-            text = f"""
-✅ <b>Шрифт применен!</b>
-
-<b>Активный шрифт:</b> {font_name}
-
-Шрифт сохранен в ваших настройках и будет использоваться для:
-• 📋 Заголовков видео
-• 📝 Субтитров
-
-Настройки автоматически применятся при следующей обработке видео.
-            """
             
-            await callback.answer("✅ Шрифт сохранен в настройках", show_alert=True)
+        user_id = callback.from_user.id
+        
+        # Persist the selected font in user settings
+        # For now, we assume this sets the title font.
+        # This could be extended to ask the user whether to set for title or subtitle.
+        settings_key = "title_style"
+        success = await UserSettingsService.set_style_setting(user_id, settings_key, 'font', font_name)
+        
+        if success:
+            await callback.answer(f"✅ Шрифт '{font_name}' сохранен для заголовков.", show_alert=True)
+            
+            # Now, we want to return to the style settings menu.
+            # To do this, we can call the handler from settings_handlers.
+            # We need to make sure the state is correctly managed.
+            await show_style_settings(callback, state)
+            
         else:
-            text = f"""
-⚠️ <b>Частично применено</b>
-
-<b>Выбранный шрифт:</b> {font_name}
-
-Произошла ошибка при сохранении настроек. Попробуйте еще раз.
-            """
+            await callback.answer("❌ Не удалось сохранить шрифт. Попробуйте снова.", show_alert=True)
             
-            await callback.answer("⚠️ Ошибка сохранения настроек", show_alert=True)
-        
-        from app.bot.keyboards.main_menu import get_main_menu_keyboard
-        from app.config.constants import UserRole
-        
-        await callback.message.edit_text(
-            text,
-            reply_markup=get_main_menu_keyboard(UserRole.USER),
-            parse_mode="HTML"
-        )
-        
-        await state.clear()
-        
     except Exception as e:
-        logger.error(f"Error using selected font: {e}")
-        await callback.answer("❌ Ошибка при применении шрифта", show_alert=True)
+        logger.error(f"Error using selected font: {e}", exc_info=True)
+        await callback.answer("❌ Произошла ошибка при сохранении шрифта.", show_alert=True)
 
 
 @router.callback_query(FontAction.filter(F.action == "refresh_fonts"), FontStates.selecting_font)
 async def refresh_font_list(callback: CallbackQuery, callback_data: FontAction, state: FSMContext) -> None:
     """
-    Refresh and reload font list.
+    Refresh the list of available fonts.
     
     Args:
         callback: Callback query
         callback_data: Font action data
         state: FSM context
     """
-    await callback.answer("🔄 Обновляем список шрифтов...", show_alert=False)
     await show_font_selection(callback, callback_data, state)
 
 
 @router.callback_query(FontAction.filter(F.action == "back_to_main"))
 async def back_to_main_menu(callback: CallbackQuery, callback_data: FontAction, state: FSMContext) -> None:
     """
-    Go back to main menu.
+    Return to the main menu.
     
     Args:
         callback: Callback query
-        callback_data: Font action data  
+        callback_data: Font action data
         state: FSM context
     """
-    try:
-        from app.bot.keyboards.main_menu import get_main_menu_keyboard
-        from app.config.constants import UserRole
-        
-        text = """
-🏠 <b>Главное меню</b>
-
-Добро пожаловать в VideoGenerator3000!
-Выберите действие из меню ниже:
-        """
-        
-        await callback.message.edit_text(
-            text,
-            reply_markup=get_main_menu_keyboard(UserRole.USER),
-            parse_mode="HTML"
-        )
-        
-        await state.clear()
-        
-    except Exception as e:
-        logger.error(f"Error returning to main menu: {e}")
-        await callback.answer("❌ Ошибка перехода в главное меню", show_alert=True) 
+    from app.bot.handlers.main_handlers import main_menu
+    await main_menu(callback.message, state) 
