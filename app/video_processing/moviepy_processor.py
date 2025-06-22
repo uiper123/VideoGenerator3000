@@ -264,7 +264,7 @@ class VideoProcessorMoviePy:
             font=font_path if font_path and os.path.exists(font_path) else 'DejaVu-Sans-Bold',
             stroke_color='black',
             stroke_width=2
-        ).set_duration(video.duration).set_position(('center', 'top')).set_margin(20)
+        ).set_duration(video.duration).set_position(('center', 20))
         
         # Composite video with title
         return CompositeVideoClip([video, title_clip])
