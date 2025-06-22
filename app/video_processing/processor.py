@@ -372,7 +372,7 @@ class VideoProcessor:
                 return float(num) / float(den)
             else:
                 return float(fps_str)
-        except:
+        except Exception:
             return 30.0
     
     def _check_ffmpeg(self) -> bool:
@@ -473,11 +473,11 @@ class VideoProcessor:
     def get_available_fonts(self) -> Dict[str, str]:
         """
         Get available fonts from the fonts directory.
-
+        
         This function scans the /app/fonts directory for font families. For each family,
         it looks for font files in a 'static' subdirectory first. If it exists,
         it scans that directory. Otherwise, it scans the family's root directory.
-        
+
         Returns:
             Dict mapping font names to font file paths
         """
@@ -488,15 +488,15 @@ class VideoProcessor:
             logger.warning(f"Fonts directory not found or not a directory: {fonts_dir}")
             return fonts
 
-            logger.info(f"Scanning fonts directory: {fonts_dir}")
-            try:
+        logger.info(f"Scanning fonts directory: {fonts_dir}")
+        try:
             for font_family in sorted(os.listdir(fonts_dir)):
-                    family_path = os.path.join(fonts_dir, font_family)
-                    if os.path.isdir(family_path):
+                family_path = os.path.join(fonts_dir, font_family)
+                if os.path.isdir(family_path):
                     logger.debug(f"Processing font family directory: {family_path}")
-                        
+                    
                     search_path = family_path
-                        static_path = os.path.join(family_path, "static")
+                    static_path = os.path.join(family_path, "static")
 
                     if os.path.isdir(static_path):
                         search_path = static_path
@@ -510,9 +510,9 @@ class VideoProcessor:
                                 font_name = f"{font_family} - {clean_name}"
                                 
                                 if font_name not in fonts:
-                                fonts[font_name] = font_path
+                                    fonts[font_name] = font_path
                                     logger.debug(f"Added font: {font_name} -> {font_path}")
-            except Exception as e:
+        except Exception as e:
             logger.error(f"Error scanning fonts directory '{fonts_dir}': {e}", exc_info=True)
             
         logger.info(f"Total fonts available: {len(fonts)}")

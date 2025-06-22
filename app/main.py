@@ -5,6 +5,8 @@ import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
+import os
+import json
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -17,6 +19,22 @@ from aiogram.types import CallbackQuery
 from app.config.settings import settings
 from app.database.connection import db_manager
 from app.bot.handlers import user_handlers
+
+
+def setup_google_credentials():
+    """Create Google credentials file from environment variable."""
+    credentials_content = os.getenv("GOOGLE_CREDENTIALS_JSON_CONTENT")
+    if credentials_content:
+        credentials_path = "/app/google-credentials.json"
+        try:
+            with open(credentials_path, "w") as f:
+                f.write(credentials_content)
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
+            logger.info("Google credentials file created successfully from environment variable.")
+        except Exception as e:
+            logger.error(f"Failed to create Google credentials file: {e}")
+    else:
+        logger.warning("GOOGLE_CREDENTIALS_JSON_CONTENT environment variable not set. Google services may not work.")
 
 
 # Configure logging
@@ -230,6 +248,9 @@ async def main() -> None:
     """
     Main application entry point.
     """
+    # Create Google credentials file at startup
+    setup_google_credentials()
+    
     # For now, always use polling mode
     await main_polling()
 

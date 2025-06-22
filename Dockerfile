@@ -26,8 +26,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Create necessary directories
-RUN mkdir -p /tmp/videos /tmp/processed && \
-    chmod 755 /tmp/videos /tmp/processed
+RUN mkdir -p /tmp/videos /tmp/processed
 
 # Copy application code
 COPY app/ ./app/
@@ -35,8 +34,12 @@ COPY app/ ./app/
 # Copy fonts directory
 COPY fonts/ ./fonts/
 
+COPY run_bot.py .
+COPY entrypoint.sh .
+
 # Create non-root user for security
-RUN groupadd -r videobot && useradd -r -g videobot videobot && \
+RUN chmod +x /app/entrypoint.sh && \
+    groupadd -r videobot && useradd -r -g videobot videobot && \
     chown -R videobot:videobot /app /tmp/videos /tmp/processed
 
 # Switch to non-root user
@@ -49,5 +52,8 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)" || exit 1
 
-# Default command
-CMD ["python", "app/main.py"]
+# Set the entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# The default command will be overridden by Railway's start command
+CMD ["bot"]
