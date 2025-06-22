@@ -21,6 +21,10 @@ RUN apt-get update && apt-get install -y \
     imagemagick \
     && rm -rf /var/lib/apt/lists/*
 
+# Relax ImageMagick security policy to allow MoviePy to generate text with strokes.
+# This comments out the policy that prevents reading from temporary files, which MoviePy uses.
+RUN sed -i 's/<policy domain="path" rights="none" pattern="@.*" \/>/<!-- & -->/' /etc/ImageMagick-6/policy.xml
+
 # Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
