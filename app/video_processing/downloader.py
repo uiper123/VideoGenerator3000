@@ -115,7 +115,7 @@ class VideoDownloader:
             logger.info(f"Extracting YouTube video info from: {url}")
             
             # Create YouTube object with better error handling
-            yt = YouTube(url, use_oauth=False, allow_oauth_cache=False)
+            yt = YouTube(url, use_oauth=False, allow_oauth_cache=False, use_po_token=True)
             
             logger.info(f"Video title: {yt.title}")
             logger.info(f"Video length: {yt.length} seconds")
