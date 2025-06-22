@@ -4,7 +4,7 @@ aiohttp==3.10.11
 asyncio-throttle==1.0.2
 
 # Database
-sqlalchemy==2.0.36
+sqlalchemy==2.0.25
 asyncpg==0.30.0
 psycopg2-binary==2.9.9
 alembic==1.14.0
@@ -15,7 +15,7 @@ flower==2.0.1
 redis==5.0.1
 
 # Video processing
-pytubefix==5.2.7
+pytubefix==9.2.0
 ffmpeg-python==0.2.0
 moviepy==2.0.0.dev2
 imageio==2.34.0
@@ -51,3 +51,7 @@ pytest-mock==3.14.0
 black==24.10.0
 isort==5.13.2
 mypy==1.13.0
+
+# Added from the code block
+pytelegrambotapi==4.15.2
+tenacity==8.2.3
