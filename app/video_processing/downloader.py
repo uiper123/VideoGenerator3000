@@ -5,6 +5,8 @@ import os
 import logging
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
+import ffmpeg
+import uuid
 
 from pytubefix import YouTube
 from pytubefix.exceptions import VideoUnavailable, RegexMatchError
@@ -73,6 +75,30 @@ class VideoDownloader:
             return domain in ['youtube.com', 'youtu.be']
         except:
             return False
+    
+    def _merge_audio_video(self, video_path: str, audio_path: str, output_path: str):
+        """Merge video and audio files using ffmpeg-python."""
+        try:
+            logger.info(f"Merging video {video_path} and audio {audio_path}")
+            
+            input_video = ffmpeg.input(video_path)
+            input_audio = ffmpeg.input(audio_path)
+            
+            (
+                ffmpeg
+                .output(input_video.video, input_audio.audio, output_path, vcodec='copy', acodec='aac')
+                .run(overwrite_output=True, quiet=True)
+            )
+            
+            logger.info(f"Merged file saved to {output_path}")
+            
+            # Clean up temporary files
+            os.remove(video_path)
+            os.remove(audio_path)
+            
+        except ffmpeg.Error as e:
+            logger.error(f"ffmpeg error during merge: {e.stderr.decode() if e.stderr else str(e)}")
+            raise DownloadError(f"Failed to merge video and audio: {e}")
     
     def _download_youtube(self, url: str, quality: str) -> Dict[str, Any]:
         """
@@ -169,25 +195,62 @@ class VideoDownloader:
             
             logger.info(f"Selected stream: {getattr(stream, 'resolution', 'unknown')}, {getattr(stream, 'filesize', 'unknown')} bytes")
             
+            # Check if selected stream is adaptive (video only)
+            is_adaptive = stream.is_adaptive
+            
             # Check file size if available
             if hasattr(stream, 'filesize') and stream.filesize and stream.filesize > MAX_DOWNLOAD_SIZE:
                 raise DownloadError(f"Video too large: {stream.filesize} bytes (max 2GB)")
             
             # Download the video
-            logger.info("Starting download...")
-            downloaded_file = stream.download(
-                output_path=self.download_dir,
-                filename_prefix="youtube_"
-            )
+            logger.info("Starting video stream download...")
             
-            logger.info(f"Download completed: {downloaded_file}")
+            # Use a temporary filename for the video part if merging is needed
+            video_filename_prefix = f"video_{uuid.uuid4()}" if is_adaptive else "youtube_"
+            
+            video_file = stream.download(
+                output_path=self.download_dir,
+                filename_prefix=video_filename_prefix
+            )
+            logger.info(f"Video download completed: {video_file}")
+            
+            final_video_path = video_file
+            
+            # If adaptive, download audio and merge
+            if is_adaptive:
+                logger.info("Adaptive stream detected, downloading best audio...")
+                
+                audio_stream = yt.streams.filter(only_audio=True, file_extension='mp4').order_by('abr').desc().first()
+                
+                if audio_stream:
+                    logger.info(f"Found audio stream: {audio_stream.abr}, {audio_stream.filesize} bytes")
+                    
+                    # Download audio with a temporary filename
+                    audio_file = audio_stream.download(
+                        output_path=self.download_dir,
+                        filename_prefix=f"audio_{uuid.uuid4()}"
+                    )
+                    logger.info(f"Audio download completed: {audio_file}")
+                    
+                    # Define final merged output path
+                    final_filename = f"youtube_{yt.title.replace('/', '_').replace(' ', '_')}.mp4"
+                    merged_output_path = os.path.join(self.download_dir, final_filename)
+                    
+                    # Merge video and audio
+                    self._merge_audio_video(video_file, audio_file, merged_output_path)
+                    final_video_path = merged_output_path
+                    
+                else:
+                    logger.warning("No audio stream found for adaptive video. The final video will be silent.")
+            
+            logger.info(f"Final video file available at: {final_video_path}")
             
             return {
                 'title': yt.title,
                 'duration': yt.length,
                 'url': url,
-                'local_path': downloaded_file,
-                'file_size': os.path.getsize(downloaded_file),
+                'local_path': final_video_path,
+                'file_size': os.path.getsize(final_video_path),
                 'format': 'mp4',
                 'resolution': getattr(stream, 'resolution', 'unknown'),
                 'description': yt.description[:500] if yt.description else '',
