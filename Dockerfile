@@ -11,15 +11,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Install system dependencies, including Node.js for pytubefix
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends \
     ffmpeg \
-    wget \
-    curl \
-    git \
     build-essential \
+    wget \
     pkg-config \
     imagemagick \
-    gnupg \
     nodejs \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
