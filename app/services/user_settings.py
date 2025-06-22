@@ -10,6 +10,11 @@ from app.database.models import User
 logger = logging.getLogger(__name__)
 
 
+class NoSettingsError(Exception):
+    """Raised when user settings are not found and a default is not applicable."""
+    pass
+
+
 class UserSettingsService:
     """Service for managing user style settings."""
     

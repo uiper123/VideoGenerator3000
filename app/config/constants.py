@@ -48,7 +48,9 @@ MIN_FRAGMENT_DURATION = 15  # seconds
 DEFAULT_FRAGMENT_DURATION = 30  # seconds
 
 # Shorts format specifications
-SHORTS_RESOLUTION = (1080, 1920)  # 9:16 aspect ratio
+SHORTS_WIDTH = 1080
+SHORTS_HEIGHT = 1920
+SHORTS_RESOLUTION = (SHORTS_WIDTH, SHORTS_HEIGHT)  # 9:16 aspect ratio
 SHORTS_FPS = 30
 SHORTS_BITRATE = "8M"
 
@@ -90,6 +92,24 @@ SUBTITLE_FONTS = {
         "color": "yellow",
         "stroke": "black",
         "stroke_width": 3
+    }
+}
+
+# Default text styles for video processing
+DEFAULT_TEXT_STYLES = {
+    'title': {
+        'color': 'white',
+        'size_ratio': 0.06,  # 6% of video height
+        'position_y_ratio': 0.05,  # 5% from top
+        'border_color': 'black',
+        'border_width': 3
+    },
+    'subtitle': {
+        'color': 'white',
+        'size_ratio': 0.045,  # 4.5% of video height
+        'position_y_ratio': 0.8,  # 80% from top (bottom area)
+        'border_color': 'black',
+        'border_width': 2
     }
 }
 

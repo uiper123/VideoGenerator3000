@@ -84,6 +84,7 @@ services:
     volumes:
       - ./app:/app/app
       - video_temp:/tmp/videos
+      - ./fonts:/app/fonts
     command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
     restart: unless-stopped
 
@@ -106,6 +107,7 @@ services:
       - .env
     volumes:
       - ./app:/app/app
+      - ./fonts:/app/fonts
     command: celery -A app.workers.celery_app beat --loglevel=info
     restart: unless-stopped
 

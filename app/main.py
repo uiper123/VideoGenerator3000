@@ -123,20 +123,17 @@ def create_app() -> tuple[Bot, Dispatcher]:
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
     
-    # Include routers
+    # Import and include specific handlers first
+    from app.bot.handlers import font_handlers, settings_handlers
+    dp.include_router(font_handlers.router)
+    dp.include_router(settings_handlers.router)
+    
+    # Include other routers
     dp.include_router(user_handlers.router)
     
     # Import and include video handlers
     from app.bot.handlers import video_handlers
     dp.include_router(video_handlers.router)
-    
-    # Import and include settings handlers
-    from app.bot.handlers import settings_handlers
-    dp.include_router(settings_handlers.router)
-    
-    # Import and include font handlers
-    from app.bot.handlers import font_handlers
-    dp.include_router(font_handlers.router)
     
     # Register a handler for unknown callbacks LAST
     # This handler should be more specific to avoid catching handled callbacks

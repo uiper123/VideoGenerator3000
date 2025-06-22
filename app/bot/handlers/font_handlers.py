@@ -77,7 +77,7 @@ async def show_font_selection(callback: CallbackQuery, callback_data: FontAction
         await callback.answer("❌ Ошибка при загрузке шрифтов", show_alert=True)
 
 
-@router.callback_query(FontAction.filter(F.action == "choose_font"))
+@router.callback_query(FontAction.filter(F.action == "choose_font"), FontStates.selecting_font)
 async def choose_font(callback: CallbackQuery, callback_data: FontAction, state: FSMContext) -> None:
     """
     Handle font selection.
@@ -128,7 +128,7 @@ async def choose_font(callback: CallbackQuery, callback_data: FontAction, state:
         await callback.answer("❌ Ошибка при выборе шрифта", show_alert=True)
 
 
-@router.callback_query(FontAction.filter(F.action == "create_preview"))
+@router.callback_query(FontAction.filter(F.action == "create_preview"), FontStates.selecting_font)
 async def create_preview(callback: CallbackQuery, callback_data: FontAction, state: FSMContext) -> None:
     """
     Create preview image with selected font.
@@ -232,7 +232,7 @@ async def handle_preview_input(message: Message, state: FSMContext) -> None:
         await message.answer("❌ Ошибка при создании предпросмотра")
 
 
-@router.callback_query(FontAction.filter(F.action == "back_to_fonts"))
+@router.callback_query(FontAction.filter(F.action == "back_to_fonts"), FontStates.selecting_font)
 async def back_to_fonts(callback: CallbackQuery, callback_data: FontAction, state: FSMContext) -> None:
     """
     Go back to font selection.
@@ -245,7 +245,7 @@ async def back_to_fonts(callback: CallbackQuery, callback_data: FontAction, stat
     await show_font_selection(callback, callback_data, state)
 
 
-@router.callback_query(FontAction.filter(F.action == "use_font"))
+@router.callback_query(FontAction.filter(F.action == "use_font"), FontStates.selecting_font)
 async def use_selected_font(callback: CallbackQuery, callback_data: FontAction, state: FSMContext) -> None:
     """
     Use selected font for video processing.
@@ -319,7 +319,7 @@ async def use_selected_font(callback: CallbackQuery, callback_data: FontAction, 
         await callback.answer("❌ Ошибка при применении шрифта", show_alert=True)
 
 
-@router.callback_query(FontAction.filter(F.action == "refresh_fonts"))
+@router.callback_query(FontAction.filter(F.action == "refresh_fonts"), FontStates.selecting_font)
 async def refresh_font_list(callback: CallbackQuery, callback_data: FontAction, state: FSMContext) -> None:
     """
     Refresh and reload font list.

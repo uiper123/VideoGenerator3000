@@ -4,6 +4,7 @@ Celery tasks for video processing operations.
 import os
 import uuid
 import tempfile
+import logging
 from typing import Dict, Any, List
 
 from celery import shared_task
@@ -18,7 +19,7 @@ from app.database.models import VideoTask as VideoTaskModel, VideoFragment
 from app.video_processing.downloader import VideoDownloader
 from app.video_processing.processor import VideoProcessor
 
-logger = get_task_logger(__name__)
+logger = logging.getLogger(__name__)
 
 # Create synchronous database session for Celery tasks
 engine = create_engine(settings.database_url.replace('+asyncpg', '+psycopg2'))
@@ -372,7 +373,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
 def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
     Process full video into professional shorts format and cut into fragments.
-    This uses the new correct workflow: process first, then cut.
+    This uses MoviePy for better reliability and audio/subtitle handling.
     
     Args:
         task_id: Task ID
@@ -382,7 +383,7 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
     Returns:
         Dict with processing results including fragments
     """
-    from app.video_processing.processor import VideoProcessor
+    from app.video_processing.moviepy_processor import VideoProcessorMoviePy
     import asyncio
     from app.services.user_settings import UserSettingsService
     from app.database.models import VideoTask as VideoTaskModel
@@ -391,8 +392,8 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
     output_dir = f"/tmp/processed/{task_id}"
     os.makedirs(output_dir, exist_ok=True)
     
-    # Initialize processor
-    processor = VideoProcessor(output_dir)
+    # Initialize MoviePy processor
+    processor = VideoProcessorMoviePy(output_dir)
     
     # Get user ID from task
     user_id = None
@@ -443,15 +444,14 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
     fragment_duration = settings_dict.get("fragment_duration", 30)
     enable_subtitles = settings_dict.get("enable_subtitles", True)
     
-    # Process full video and cut into fragments with the new method
-    logger.info(f"Processing full video with new method for task {task_id}")
+    # Process full video and cut into fragments with MoviePy
+    logger.info(f"Processing full video with MoviePy for task {task_id}")
     
-    result = processor.process_full_video_then_fragment(
+    result = processor.process_video_with_moviepy(
         video_path=video_path,
         fragment_duration=fragment_duration,
         quality=quality,
         title=title,
-        subtitle_style="modern",
         title_color=title_color,
         title_size=title_size,
         subtitle_color=subtitle_color,

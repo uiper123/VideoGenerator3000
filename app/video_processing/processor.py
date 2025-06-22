@@ -473,62 +473,49 @@ class VideoProcessor:
     def get_available_fonts(self) -> Dict[str, str]:
         """
         Get available fonts from the fonts directory.
+
+        This function scans the /app/fonts directory for font families. For each family,
+        it looks for font files in a 'static' subdirectory first. If it exists,
+        it scans that directory. Otherwise, it scans the family's root directory.
         
         Returns:
             Dict mapping font names to font file paths
         """
         fonts = {}
-        
-        # Default system fonts
-        system_fonts = {
-            "DejaVu Sans Bold": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "DejaVu Sans": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "Liberation Sans Bold": "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "Liberation Sans": "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        }
-        
-        # Add system fonts that exist
-        for name, path in system_fonts.items():
-            if os.path.exists(path):
-                fonts[name] = path
-        
-        # Custom fonts from fonts directory  
         fonts_dir = "/app/fonts"
-        if os.path.exists(fonts_dir):
+
+        if not os.path.isdir(fonts_dir):
+            logger.warning(f"Fonts directory not found or not a directory: {fonts_dir}")
+            return fonts
+
             logger.info(f"Scanning fonts directory: {fonts_dir}")
             try:
-                for font_family in os.listdir(fonts_dir):
+            for font_family in sorted(os.listdir(fonts_dir)):
                     family_path = os.path.join(fonts_dir, font_family)
                     if os.path.isdir(family_path):
-                        logger.info(f"Found font family directory: {font_family}")
+                    logger.debug(f"Processing font family directory: {family_path}")
                         
-                        # Look for font files in static subdirectory
+                    search_path = family_path
                         static_path = os.path.join(family_path, "static")
-                        if os.path.exists(static_path):
-                            for font_file in os.listdir(static_path):
-                                if font_file.endswith(('.ttf', '.otf')):
-                                    # Clean up font name for display
-                                    clean_name = font_file.replace('.ttf', '').replace('.otf', '').replace('-', ' ')
-                                    font_name = f"{font_family} - {clean_name}"
-                                    font_path = os.path.join(static_path, font_file)
-                                    fonts[font_name] = font_path
-                                    logger.info(f"Added font: {font_name} -> {font_path}")
-                        
-                        # Also check root of family directory
-                        for font_file in os.listdir(family_path):
-                            if font_file.endswith(('.ttf', '.otf')):
-                                clean_name = font_file.replace('.ttf', '').replace('.otf', '').replace('-', ' ')
+
+                    if os.path.isdir(static_path):
+                        search_path = static_path
+                    
+                    logger.debug(f"Scanning for font files in: {search_path}")
+                    for font_file in sorted(os.listdir(search_path)):
+                        if font_file.lower().endswith(('.ttf', '.otf')):
+                            font_path = os.path.join(search_path, font_file)
+                            if os.path.isfile(font_path):
+                                clean_name = Path(font_file).stem.replace('-', ' ').replace('_', ' ')
                                 font_name = f"{font_family} - {clean_name}"
-                                font_path = os.path.join(family_path, font_file)
+                                
+                                if font_name not in fonts:
                                 fonts[font_name] = font_path
-                                logger.info(f"Added font: {font_name} -> {font_path}")
+                                    logger.debug(f"Added font: {font_name} -> {font_path}")
             except Exception as e:
-                logger.error(f"Error scanning fonts directory: {e}")
-        else:
-            logger.warning(f"Fonts directory not found: {fonts_dir}")
+            logger.error(f"Error scanning fonts directory '{fonts_dir}': {e}", exc_info=True)
             
         logger.info(f"Total fonts available: {len(fonts)}")
-        
         return fonts
     
     def create_preview_image(

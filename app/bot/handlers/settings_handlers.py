@@ -5,6 +5,7 @@ import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
 
 from app.bot.keyboards.main_menu import (
     SettingsAction,
@@ -19,10 +20,276 @@ from app.bot.keyboards.main_menu import (
 from app.config.constants import MENU_EMOJIS
 from app.database.connection import get_db_session
 from app.database.models import User
-from app.services.user_settings import UserSettingsService
+from app.services.user_settings import UserSettingsService, NoSettingsError
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+class SettingsStates(StatesGroup):
+    """States for settings management."""
+    main = State()
+    title_settings = State()
+    subtitle_settings = State()
+
+
+@router.callback_query(SettingsAction.filter(F.action == "open_settings_menu"))
+async def show_settings_menu(callback: CallbackQuery, callback_data: SettingsAction, state: FSMContext) -> None:
+    """
+    Show settings menu.
+    
+    Args:
+        callback: Callback query
+        callback_data: Settings action data
+        state: FSM context
+    """
+    try:
+        text = f"""
+🎬 <b>Настройки видео</b>
+
+<b>Параметры по умолчанию:</b>
+⏱️ Длительность фрагментов: 30 сек
+📊 Качество: 1080p
+📝 Субтитры: Включены
+🎨 Формат: 9:16 (Shorts)
+
+<b>Дополнительные настройки:</b>
+🔊 Громкость: Авто-нормализация
+🎭 Переходы: Плавные
+📐 Обрезка: Умная (по содержимому)
+🌈 Фильтры: Автоулучшение
+
+<i>Эти настройки применяются ко всем новым видео</i>
+        """
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_back_keyboard("settings_menu"),
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Error in show_settings_menu: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при загрузке настроек", show_alert=True)
+
+
+@router.callback_query(SettingsAction.filter(F.action == "title_settings"), SettingsStates.main)
+async def show_title_settings(callback: CallbackQuery, callback_data: SettingsAction, state: FSMContext) -> None:
+    """Show title settings menu."""
+    await state.set_state(SettingsStates.title_settings)
+    text = f"""
+🎨 <b>Настройки стилей текста</b>
+
+📋 <b>Заголовки:</b>
+• Цвет, размер, шрифт
+• Положение на экране
+• Стиль оформления
+
+👁️ <b>Предпросмотр:</b>
+Проверьте как будут выглядеть ваши настройки
+
+<i>Все изменения сохраняются автоматически</i>
+    """
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_style_settings_menu_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(SettingsAction.filter(F.action == "subtitle_settings"), SettingsStates.main)
+async def show_subtitle_settings(callback: CallbackQuery, callback_data: SettingsAction, state: FSMContext) -> None:
+    """Show subtitle settings menu."""
+    await state.set_state(SettingsStates.subtitle_settings)
+    text = f"""
+🎨 <b>Настройки стилей текста</b>
+
+📝 <b>Субтитры:</b>
+• Цвет, размер, шрифт  
+• Анимация появления
+• Прозрачность и обводка
+
+👁️ <b>Предпросмотр:</b>
+Проверьте как будут выглядеть ваши настройки
+
+<i>Все изменения сохраняются автоматически</i>
+    """
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_style_settings_menu_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(SettingsAction.filter(F.action == "preview_style"), SettingsStates.main)
+async def preview_style(callback: CallbackQuery, state: FSMContext) -> None:
+    """Generate and send a preview of the current style settings."""
+    await callback.answer("⚙️ Генерируется предпросмотр...", show_alert=False)
+    user_id = callback.from_user.id
+    
+    # Get current user settings
+    title_color = await UserSettingsService.get_style_setting(user_id, 'title_style', 'color')
+    title_size = await UserSettingsService.get_style_setting(user_id, 'title_style', 'size')
+    title_font = await UserSettingsService.get_style_setting(user_id, 'title_style', 'font')
+    
+    subtitle_color = await UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'color')
+    subtitle_size = await UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'size')
+    subtitle_font = await UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'font')
+    
+    # Get human-readable names
+    title_color_name = UserSettingsService.get_color_name(title_color)
+    title_size_name = UserSettingsService.get_size_name(title_size)
+    subtitle_color_name = UserSettingsService.get_color_name(subtitle_color)
+    subtitle_size_name = UserSettingsService.get_size_name(subtitle_size)
+    
+    text = f"""
+👁️ <b>Предпросмотр стилей</b>
+
+<b>Ваши текущие настройки:</b>
+
+📋 <b>Заголовок:</b>
+• Цвет: {title_color_name}
+• Размер: {title_size_name}
+• Шрифт: {title_font}
+
+📝 <b>Субтитры:</b>
+• Цвет: {subtitle_color_name}
+• Размер: {subtitle_size_name}
+• Шрифт: {subtitle_font}
+
+<i>💡 Совет: Обработайте видео чтобы увидеть реальный результат с вашими настройками!</i>
+    """
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_style_settings_menu_keyboard(),
+        parse_mode="HTML"
+    )
+    if not preview_style:
+        await callback.answer("❌ Ошибка при создании предпросмотра.", show_alert=True)
+
+
+@router.callback_query(SettingsAction.filter(F.action == "reset_to_defaults"), SettingsStates.main)
+async def reset_settings_to_defaults(callback: CallbackQuery, state: FSMContext) -> None:
+    """Reset user settings to default values."""
+    user_id = callback.from_user.id
+    
+    # Reset user settings to default
+    success = await UserSettingsService.reset_user_settings(user_id)
+    
+    if success:
+        await callback.answer("✅ Стили сброшены к настройкам по умолчанию", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка при сбросе настроек.", show_alert=True)
+    
+    # Return to style menu
+    await show_style_settings(callback)
+
+
+@router.callback_query(SettingsAction.filter(F.action == "back_to_settings"), SettingsStates.any())
+async def back_to_settings_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    """Go back to the main settings menu."""
+    await show_settings_menu(callback, SettingsAction(action="open_settings_menu"), state)
+
+
+# --- Title Settings Handlers ---
+
+@router.callback_query(SetValueAction.filter(F.entity == "title" and F.param == "color"), SettingsStates.title_settings)
+async def set_title_color(callback: CallbackQuery, callback_data: SetValueAction, state: FSMContext) -> None:
+    """Set the color for the title."""
+    user_id = callback.from_user.id
+    color = callback_data.value
+    
+    # Save color to user settings
+    settings_key = "title_style"
+    success = await UserSettingsService.set_style_setting(user_id, settings_key, 'color', color)
+    
+    if success:
+        color_name = UserSettingsService.get_color_name(color)
+        await callback.answer(f"✅ Цвет заголовка изменен на {color_name}", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка сохранения настроек", show_alert=True)
+    
+    # Return to title settings
+    await show_title_settings(callback, SettingsAction(action="title_settings"), state)
+
+
+@router.callback_query(SetValueAction.filter(F.entity == "title" and F.param == "size"), SettingsStates.title_settings)
+async def set_title_size(callback: CallbackQuery, callback_data: SetValueAction, state: FSMContext) -> None:
+    """Set the size for the title."""
+    user_id = callback.from_user.id
+    size = callback_data.value
+    
+    # Save size to user settings
+    settings_key = "title_style"
+    success = await UserSettingsService.set_style_setting(user_id, settings_key, 'size', size)
+    
+    if success:
+        size_name = UserSettingsService.get_size_name(size)
+        await callback.answer(f"✅ Размер заголовка изменен на {size_name}", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка сохранения настроек", show_alert=True)
+    
+    # Return to title settings
+    await show_title_settings(callback, SettingsAction(action="title_settings"), state)
+
+
+@router.callback_query(SettingsAction.filter(F.action == "font_settings"), SettingsStates.title_settings)
+async def open_font_settings(callback: CallbackQuery, state: FSMContext) -> None:
+    """Redirect to the font selection menu."""
+    # We need to call the handler from font_handlers.py
+    # To do this cleanly, we can use a dispatcher instance if available
+    # or just inform the user. For now, let's just send a message.
+    # A better way would be to refactor this to use a shared service or router.
+    await callback.message.answer("Переход в меню выбора шрифтов...")
+    # This simulates a user command to open the font menu
+    # Note: This is a simplified approach.
+    # A full solution might involve deeper integration between handlers.
+    from app.bot.handlers.font_handlers import show_font_selection
+    await show_font_selection(callback, FontAction(action="select_font"), state)
+
+
+# --- Subtitle Settings Handlers ---
+
+@router.callback_query(SetValueAction.filter(F.entity == "subtitle" and F.param == "color"), SettingsStates.subtitle_settings)
+async def set_subtitle_color(callback: CallbackQuery, callback_data: SetValueAction, state: FSMContext) -> None:
+    """Set the color for the subtitle."""
+    user_id = callback.from_user.id
+    color = callback_data.value
+    
+    # Save color to user settings
+    settings_key = "subtitle_style"
+    success = await UserSettingsService.set_style_setting(user_id, settings_key, 'color', color)
+    
+    if success:
+        color_name = UserSettingsService.get_color_name(color)
+        await callback.answer(f"✅ Цвет субтитров изменен на {color_name}", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка сохранения настроек", show_alert=True)
+    
+    # Return to subtitle settings
+    await show_subtitle_settings(callback, SettingsAction(action="subtitle_settings"), state)
+
+
+@router.callback_query(SetValueAction.filter(F.entity == "subtitle" and F.param == "size"), SettingsStates.subtitle_settings)
+async def set_subtitle_size(callback: CallbackQuery, callback_data: SetValueAction, state: FSMContext) -> None:
+    """Set the size for the subtitle."""
+    user_id = callback.from_user.id
+    size = callback_data.value
+    
+    # Save size to user settings
+    settings_key = "subtitle_style"
+    success = await UserSettingsService.set_style_setting(user_id, settings_key, 'size', size)
+    
+    if success:
+        size_name = UserSettingsService.get_size_name(size)
+        await callback.answer(f"✅ Размер субтитров изменен на {size_name}", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка сохранения настроек", show_alert=True)
+    
+    # Return to subtitle settings
+    await show_subtitle_settings(callback, SettingsAction(action="subtitle_settings"), state)
 
 
 @router.callback_query(SettingsAction.filter(F.action == "video_settings"))
@@ -383,56 +650,6 @@ async def set_text_size(callback: CallbackQuery, callback_data: StyleAction) -> 
     
     # Return to size settings
     await show_size_settings(callback, callback_data)
-
-
-@router.callback_query(StyleAction.filter(F.action == "preview_styles"))
-async def preview_styles(callback: CallbackQuery) -> None:
-    """
-    Show style preview.
-    
-    Args:
-        callback: Callback query
-    """
-    user_id = callback.from_user.id
-    
-    # Get current user settings
-    title_color = await UserSettingsService.get_style_setting(user_id, 'title_style', 'color')
-    title_size = await UserSettingsService.get_style_setting(user_id, 'title_style', 'size')
-    title_font = await UserSettingsService.get_style_setting(user_id, 'title_style', 'font')
-    
-    subtitle_color = await UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'color')
-    subtitle_size = await UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'size')
-    subtitle_font = await UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'font')
-    
-    # Get human-readable names
-    title_color_name = UserSettingsService.get_color_name(title_color)
-    title_size_name = UserSettingsService.get_size_name(title_size)
-    subtitle_color_name = UserSettingsService.get_color_name(subtitle_color)
-    subtitle_size_name = UserSettingsService.get_size_name(subtitle_size)
-    
-    text = f"""
-👁️ <b>Предпросмотр стилей</b>
-
-<b>Ваши текущие настройки:</b>
-
-📋 <b>Заголовок:</b>
-• Цвет: {title_color_name}
-• Размер: {title_size_name}
-• Шрифт: {title_font}
-
-📝 <b>Субтитры:</b>
-• Цвет: {subtitle_color_name}
-• Размер: {subtitle_size_name}
-• Шрифт: {subtitle_font}
-
-<i>💡 Совет: Обработайте видео чтобы увидеть реальный результат с вашими настройками!</i>
-    """
-    
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_style_settings_menu_keyboard(),
-        parse_mode="HTML"
-    )
 
 
 @router.callback_query(StyleAction.filter(F.action == "reset_styles"))
