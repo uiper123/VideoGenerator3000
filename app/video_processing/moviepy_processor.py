@@ -3,6 +3,8 @@ Video processor using MoviePy for better reliability and easier text/subtitle ha
 """
 import os
 import logging
+import uuid
+import subprocess
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 
@@ -139,17 +141,43 @@ class VideoProcessorMoviePy:
             processed_video_path = os.path.join(self.output_dir, "processed_full_video.mp4")
             logger.info("Saving processed full video...")
             
-            processed_video.write_videofile(
-                processed_video_path,
-                fps=SHORTS_FPS,
-                codec='libx264',
-                audio_codec='aac',
-                temp_audiofile='temp-audio.m4a',
-                remove_temp=True,
-                logger=None,  # Disable MoviePy's verbose logging
-                preset='ultrafast',
-                threads=4
-            )
+            try:
+                processed_video.write_videofile(
+                    processed_video_path,
+                    fps=SHORTS_FPS,
+                    codec='libx264',
+                    audio_codec='aac',
+                    temp_audiofile=f'/tmp/temp-audio-full-{uuid.uuid4().hex[:8]}.m4a',
+                    remove_temp=True,
+                    logger=None,  # Disable MoviePy's verbose logging
+                    preset='ultrafast',
+                    threads=2,
+                    verbose=False,
+                    write_logfile=False
+                )
+            except Exception as e:
+                logger.warning(f"First attempt to save full video failed: {e}")
+                # Try without audio if audio processing fails
+                try:
+                    if processed_video.audio is not None:
+                        processed_video = processed_video.without_audio()
+                    processed_video.write_videofile(
+                        processed_video_path,
+                        fps=SHORTS_FPS,
+                        codec='libx264',
+                        temp_audiofile=None,
+                        audio=False,
+                        remove_temp=True,
+                        logger=None,
+                        preset='ultrafast',
+                        threads=2,
+                        verbose=False,
+                        write_logfile=False
+                    )
+                    logger.warning("Full video saved without audio due to processing error")
+                except Exception as e2:
+                    logger.error(f"Failed to save full video even without audio: {e2}")
+                    raise RuntimeError(f"Could not save processed video: {e2}")
             
             # Clean up
             video.close()
@@ -246,7 +274,7 @@ class VideoProcessorMoviePy:
             'purple': 'purple',
             'pink': 'pink'
         }
-        text_color = color_map.get(color, 'white')
+        text_color = color_map.get(color, 'red')  # Changed default to red
         
         # Get font size
         size_map = {
@@ -257,12 +285,25 @@ class VideoProcessorMoviePy:
         }
         font_size = size_map.get(size, size_map['medium'])
         
+        # Determine font to use
+        if font_path and os.path.exists(font_path):
+            font_name = font_path
+        else:
+            # Try Kaph font as fallback
+            kaph_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
+            if os.path.exists(kaph_path):
+                font_name = kaph_path
+            else:
+                font_name = 'DejaVu-Sans-Bold'
+        
+        logger.info(f"Using font for title: {font_name}")
+        
         # Create title clip
         title_clip = TextClip(
             title,
             fontsize=font_size,
             color=text_color,
-            font=font_path if font_path and os.path.exists(font_path) else 'DejaVu-Sans-Bold',
+            font=font_name,
             stroke_color='black',
             stroke_width=2
         ).set_duration(video.duration).set_position(('center', 20))
@@ -282,17 +323,77 @@ class VideoProcessorMoviePy:
             List of subtitle segments
         """
         try:
-            # Create a VideoProcessor instance for subtitle generation
-            from app.video_processing.processor import VideoProcessor
+            logger.info("Starting speech recognition with faster-whisper...")
             
-            processor = VideoProcessor(self.output_dir)
-            subtitles = processor.generate_subtitles_from_audio(video_path, 0, duration)
+            # Try to use faster-whisper directly with better error handling
+            from faster_whisper import WhisperModel
             
+            # Create temporary audio file
+            temp_audio = os.path.join("/tmp", f"temp_audio_{uuid.uuid4().hex[:8]}.wav")
+            
+            # Extract audio from video
+            cmd = [
+                'ffmpeg',
+                '-i', video_path,
+                '-vn',  # No video
+                '-acodec', 'pcm_s16le',  # PCM 16-bit little-endian
+                '-ac', '1',  # Convert to mono
+                '-ar', '16000',  # 16kHz sample rate for faster-whisper
+                '-f', 'wav',  # Force WAV format
+                '-y',
+                temp_audio
+            ]
+            
+            # Extract audio
+            subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300)
+            
+            if not os.path.exists(temp_audio):
+                logger.warning("Audio extraction failed, using simple subtitles")
+                return self._generate_simple_subtitles(duration)
+            
+            # Set custom cache directory to avoid permission issues
+            os.environ['HF_HOME'] = '/tmp/.cache/huggingface'
+            os.environ['TRANSFORMERS_CACHE'] = '/tmp/.cache/transformers'
+            
+            # Load faster-whisper model
+            model = WhisperModel("base", device="cpu", compute_type="int8", download_root="/tmp/.cache/whisper")
+            
+            # Transcribe audio
+            segments, info = model.transcribe(
+                temp_audio,
+                language="ru",  # Russian language
+                word_timestamps=True,
+                task="transcribe"
+            )
+            
+            # Convert to subtitle format
+            subtitles = []
+            for segment in segments:
+                if segment.text.strip():
+                    subtitles.append({
+                        'start': segment.start,
+                        'end': segment.end,
+                        'text': segment.text.strip()
+                    })
+            
+            # Clean up
+            if os.path.exists(temp_audio):
+                os.remove(temp_audio)
+            
+            logger.info(f"Generated {len(subtitles)} subtitle segments")
             return subtitles
             
+        except ImportError as e:
+            logger.warning(f"faster-whisper not available: {e}")
+            return self._generate_simple_subtitles(duration)
         except Exception as e:
-            logger.error(f"Failed to generate subtitles: {e}")
+            logger.error(f"faster-whisper transcription failed: {e}")
+            # Clean up temp file if it exists
+            temp_audio = locals().get('temp_audio')
+            if temp_audio and os.path.exists(temp_audio):
+                os.remove(temp_audio)
             # Return simple demo subtitles
+            logger.info("Generated 10 simple subtitle segments")
             return self._generate_simple_subtitles(duration)
     
     def _generate_simple_subtitles(self, duration: float) -> List[Dict[str, Any]]:
@@ -366,6 +467,19 @@ class VideoProcessorMoviePy:
         }
         font_size = size_map.get(size, size_map['medium'])
         
+        # Determine font to use
+        if font_path and os.path.exists(font_path):
+            font_name = font_path
+        else:
+            # Try Kaph font as fallback
+            kaph_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
+            if os.path.exists(kaph_path):
+                font_name = kaph_path
+            else:
+                font_name = 'DejaVu-Sans-Bold'
+        
+        logger.info(f"Using font for subtitles: {font_name}")
+        
         # Create subtitle clips
         subtitle_clips = []
         
@@ -374,7 +488,7 @@ class VideoProcessorMoviePy:
                 subtitle['text'],
                 fontsize=font_size,
                 color=text_color,
-                font=font_path if font_path and os.path.exists(font_path) else 'DejaVu-Sans-Bold',
+                font=font_name,
                 stroke_color='black',
                 stroke_width=2
             ).set_start(subtitle['start']).set_duration(subtitle['end'] - subtitle['start']).set_position(('center', 0.8), relative=True)
@@ -432,18 +546,45 @@ class VideoProcessorMoviePy:
                 fragment_filename = f"fragment_{i+1:03d}.mp4"
                 fragment_path = os.path.join(self.output_dir, fragment_filename)
                 
-                # Save fragment
-                fragment_clip.write_videofile(
-                    fragment_path,
-                    fps=SHORTS_FPS,
-                    codec='libx264',
-                    audio_codec='aac',
-                    temp_audiofile=f'temp-audio-{i}.m4a',
-                    remove_temp=True,
-                    logger=None,
-                    preset='ultrafast',
-                    threads=4
-                )
+                # Save fragment with more robust error handling
+                try:
+                    fragment_clip.write_videofile(
+                        fragment_path,
+                        fps=SHORTS_FPS,
+                        codec='libx264',
+                        audio_codec='aac',
+                        temp_audiofile=f'/tmp/temp-audio-{i}-{uuid.uuid4().hex[:8]}.m4a',
+                        remove_temp=True,
+                        logger=None,
+                        preset='ultrafast',
+                        threads=2,  # Reduce threads to avoid resource conflicts
+                        verbose=False,
+                        write_logfile=False
+                    )
+                except Exception as e:
+                    logger.warning(f"First attempt failed for fragment {i+1}: {e}")
+                    # Try without audio if audio processing fails
+                    try:
+                        if fragment_clip.audio is not None:
+                            fragment_clip = fragment_clip.without_audio()
+                        fragment_clip.write_videofile(
+                            fragment_path,
+                            fps=SHORTS_FPS,
+                            codec='libx264',
+                            temp_audiofile=None,
+                            audio=False,
+                            remove_temp=True,
+                            logger=None,
+                            preset='ultrafast',
+                            threads=2,
+                            verbose=False,
+                            write_logfile=False
+                        )
+                        logger.warning(f"Fragment {i+1} saved without audio due to processing error")
+                    except Exception as e2:
+                        logger.error(f"Failed to save fragment {i+1} even without audio: {e2}")
+                        fragment_clip.close()
+                        continue
                 
                 fragment_clip.close()
                 

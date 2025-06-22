@@ -98,7 +98,7 @@ SUBTITLE_FONTS = {
 # Default text styles for video processing
 DEFAULT_TEXT_STYLES = {
     'title': {
-        'color': 'white',
+        'color': 'red',
         'size_ratio': 0.06,  # 6% of video height
         'position_y_ratio': 0.05,  # 5% from top
         'border_color': 'black',

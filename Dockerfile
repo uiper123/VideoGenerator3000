@@ -5,7 +5,11 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    HOME=/tmp \
+    HF_HOME=/tmp/.cache/huggingface \
+    TRANSFORMERS_CACHE=/tmp/.cache/transformers \
+    NUMBA_CACHE_DIR=/tmp/.cache/numba
 
 # Set work directory
 WORKDIR /app
@@ -33,7 +37,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir --upgrade yt-dlp
 
 # Create necessary directories
-RUN mkdir -p /tmp/videos /tmp/processed
+RUN mkdir -p /tmp/videos /tmp/processed /tmp/.cache/huggingface /tmp/.cache/transformers /tmp/.cache/numba && \
+    chmod -R 777 /tmp/.cache
 
 # Copy application code
 COPY app/ ./app/

@@ -157,10 +157,15 @@ class VideoProcessor:
             if font_path and os.path.exists(font_path):
                 fontfile = font_path
             else:
-                fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                # Try Kaph font first
+                kaph_font_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
+                if os.path.exists(kaph_font_path):
+                    fontfile = kaph_font_path
+                else:
+                    fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             
-            title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
-            title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={int(height*0.04)}:fontcolor=white:x=(w-text_w)/2:y={int(height*0.05)}:box=1:boxcolor=black@0.7:boxborderw=10"
+            title_escaped = title.replace("'", "\\'").replace(":", "\\:")
+            title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={int(height*0.04)}:fontcolor=red:x=(w-text_w)/2:y={int(height*0.05)}:box=1:boxcolor=black@0.7:boxborderw=10"
             filters.append(f"[with_main]{title_filter}[output]")
         else:
             # If no title, rename the final output

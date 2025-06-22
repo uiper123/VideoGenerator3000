@@ -20,7 +20,7 @@ from app.config.constants import (
 # Настройки стилей для текста
 DEFAULT_TEXT_STYLES = {
     'title': {
-        'color': 'white',
+        'color': 'red',
         'border_color': 'black',
         'border_width': 3,
         'size_ratio': 0.04,  # 4% от высоты видео
@@ -447,11 +447,16 @@ class VideoProcessor:
             # Use custom style or default
             style = title_style or DEFAULT_TEXT_STYLES['title']
             
-            # Use custom font if provided, otherwise use default
+            # Use custom font if provided, otherwise use Kaph font
             if font_path and os.path.exists(font_path):
                 fontfile = font_path
             else:
-                fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+                # Try Kaph font first
+                kaph_font_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
+                if os.path.exists(kaph_font_path):
+                    fontfile = kaph_font_path
+                else:
+                    fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             
             title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
             

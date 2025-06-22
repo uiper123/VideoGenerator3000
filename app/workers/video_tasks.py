@@ -404,11 +404,11 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
             user_id = task.user_id
     
     # Get user style settings if user_id is available
-    title_color = "white"
+    title_color = "red"
     title_size = "medium"
     subtitle_color = "white"
     subtitle_size = "medium"
-    font_name = "DejaVu Sans Bold"
+    font_name = "Kaph_Regular"
     
     if user_id:
         try:
@@ -437,13 +437,15 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
         except Exception as e:
             logger.warning(f"Failed to get user settings for {user_id}: {e}, using defaults")
     
-    # Get font path
-    # This logic is no longer needed as we've set a reliable default font
-    # fonts = processor.get_available_fonts()
-    # font_path = next(iter(fonts.values()), None) # Get the first available font
+    # Get Kaph font path
+    kaph_font_path = "/fonts/Kaph/static/Kaph-Regular.ttf"
+    if not os.path.exists(kaph_font_path):
+        # Fallback to absolute path
+        kaph_font_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
     
     # logger.info(f"Available fonts: {list(fonts.keys())}")
     logger.info(f"Processing full video with MoviePy for task {task_id}")
+    logger.info(f"Using font: {kaph_font_path}")
     
     # Process video
     result = processor.process_video_with_moviepy(
@@ -455,7 +457,7 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
         title_size=title_size,
         subtitle_color=subtitle_color,
         subtitle_size=subtitle_size,
-        font_path=None, # Set to None to use the default font
+        font_path=kaph_font_path,  # Use Kaph font path instead of None
         enable_subtitles=settings_dict.get("subtitles", True)
     )
     
