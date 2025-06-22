@@ -151,9 +151,7 @@ class VideoProcessorMoviePy:
                     remove_temp=True,
                     logger=None,  # Disable MoviePy's verbose logging
                     preset='ultrafast',
-                    threads=2,
-                    verbose=False,
-                    write_logfile=False
+                    threads=2
                 )
             except Exception as e:
                 logger.warning(f"First attempt to save full video failed: {e}")
@@ -170,9 +168,7 @@ class VideoProcessorMoviePy:
                         remove_temp=True,
                         logger=None,
                         preset='ultrafast',
-                        threads=2,
-                        verbose=False,
-                        write_logfile=False
+                        threads=2
                     )
                     logger.warning("Full video saved without audio due to processing error")
                 except Exception as e2:
