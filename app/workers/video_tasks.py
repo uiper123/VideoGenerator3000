@@ -395,7 +395,7 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
     output_dir = f"/tmp/processed/{task_id}"
     os.makedirs(output_dir, exist_ok=True)
     
-    # Initialize MoviePy processor
+    # Initialize processor
     processor = VideoProcessorMoviePy(output_dir)
     
     # Get user ID from task
@@ -438,32 +438,28 @@ def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, A
             logger.warning(f"Failed to get user settings for {user_id}: {e}")
     
     # Get font path
-    fonts = processor.get_available_fonts()
-    font_path = fonts.get(font_name)
+    # This logic is no longer needed as we've set a reliable default font
+    # fonts = processor.get_available_fonts()
+    # font_path = next(iter(fonts.values()), None) # Get the first available font
     
-    # Get settings
-    quality = settings_dict.get("quality", "1080p")
-    title = settings_dict.get("title", "")
-    fragment_duration = settings_dict.get("fragment_duration", 30)
-    enable_subtitles = settings_dict.get("enable_subtitles", True)
-    
-    # Process full video and cut into fragments with MoviePy
+    # logger.info(f"Available fonts: {list(fonts.keys())}")
     logger.info(f"Processing full video with MoviePy for task {task_id}")
     
+    # Process video
     result = processor.process_video_with_moviepy(
         video_path=video_path,
-        fragment_duration=fragment_duration,
-        quality=quality,
-        title=title,
-        title_color=title_color,
-        title_size=title_size,
-        subtitle_color=subtitle_color,
-        subtitle_size=subtitle_size,
-        font_path=font_path,
-        enable_subtitles=enable_subtitles
+        fragment_duration=settings_dict.get("duration", 30),
+        quality=settings_dict.get("quality", "1080p"),
+        title=settings_dict.get("title", ""),
+        title_color=settings_dict.get("title_color", "white"),
+        title_size=settings_dict.get("title_size", "medium"),
+        subtitle_color=settings_dict.get("subtitle_color", "white"),
+        subtitle_size=settings_dict.get("subtitle_size", "medium"),
+        font_path=None, # Set to None to use the default font
+        enable_subtitles=settings_dict.get("subtitles", True)
     )
     
-    logger.info(f"Full video processed and fragmented for task {task_id}")
+    logger.info(f"Full video processing completed for task {task_id}")
     return result
 
 
