@@ -293,17 +293,10 @@ def process_video(self, task_id: str, local_path: str, settings_dict: Dict[str, 
 @shared_task(base=VideoTask, bind=True)
 def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Optimized video processing chain: download -> full processing -> fragment cutting -> upload -> logging.
-    
-    Args:
-        task_id: Video task ID
-        url: Video URL to process
-        settings_dict: Processing settings
-        
-    Returns:
-        Dict with processing results
+    Optimized video processing chain: download -> full processing with FFmpeg -> fragment -> upload.
+    This version avoids using MoviePy for processing, relying on FFmpeg for performance.
     """
-    logger.info(f"Starting optimized video processing chain for task {task_id}")
+    logger.info(f"Starting FFmpeg-optimized video processing chain for task {task_id}")
     
     try:
         # Step 1: Download video
@@ -318,48 +311,63 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         quality = settings_dict.get("quality", "1080p")
         download_result = download_video(task_id, url, quality)
         
-        # Step 2: Full video processing and fragmentation (new unified approach)
-        logger.info(f"Step 2/5: Processing full video and fragmenting for task {task_id}")
+        # Step 2: Full video processing using high-performance FFmpeg method
+        logger.info(f"Step 2/5: Processing full video with FFmpeg for task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
                 task.status = VideoStatus.PROCESSING
                 task.progress = 30
                 session.commit()
+
+        # Get user style settings to pass to the processor
+        user_settings = get_user_settings(task_id)
         
-        processing_result = process_full_video(
-            task_id=task_id,
+        # Combine user settings with task settings
+        processing_settings = settings_dict.copy()
+        processing_settings.update(user_settings)
+
+        # Initialize the FFmpeg processor
+        output_dir = f"/tmp/processed/{task_id}"
+        os.makedirs(output_dir, exist_ok=True)
+        processor = VideoProcessor(output_dir)
+        
+        # Process the video using the new FFmpeg-native method
+        processing_result = processor.process_video_ffmpeg(
             video_path=download_result["local_path"],
-            settings_dict=settings_dict
+            settings=processing_settings
+        )
+
+        # Step 3: Cut the processed video into fragments
+        logger.info(f"Step 3/5: Fragmenting video for task {task_id}")
+        processed_video_path = processing_result['processed_video_path']
+        fragments = processor.cut_into_fragments(
+            video_path=processed_video_path,
+            fragment_duration=settings_dict.get("duration", 30),
+            title=settings_dict.get("title", "")
         )
         
-        # Extract fragments from the result
-        fragments = processing_result.get('fragments', [])
-        processed_video_path = processing_result.get('processed_video_path', '')
-        
         # Save fragments to database
-        for fragment in fragments:
+        for fragment_data in fragments:
             with get_sync_db_session() as session:
                 fragment_model = VideoFragment(
                     id=str(uuid.uuid4()),
                     task_id=task_id,
-                    fragment_number=fragment['fragment_number'],
-                    filename=fragment['filename'],
-                    local_path=fragment['local_path'],
-                    duration=fragment['duration'],
-                    start_time=fragment['start_time'],
-                    end_time=fragment.get('start_time', 0) + fragment['duration'],
-                    size_bytes=fragment['size_bytes'],
+                    fragment_number=fragment_data['fragment_number'],
+                    filename=fragment_data['filename'],
+                    local_path=fragment_data['local_path'],
+                    duration=fragment_data['duration'],
+                    start_time=fragment_data['start_time'],
+                    end_time=fragment_data.get('start_time', 0) + fragment_data['duration'],
+                    size_bytes=fragment_data['size_bytes'],
                     has_subtitles=settings_dict.get('enable_subtitles', True)
                 )
                 session.add(fragment_model)
                 session.commit()
-                
-                # Add ID to fragment dict for later use
-                fragment['id'] = fragment_model.id
-        
-        # Step 3: Upload to Google Drive
-        logger.info(f"Step 3/5: Uploading to Google Drive for task {task_id}")
+                fragment_data['id'] = fragment_model.id
+
+        # Step 4: Upload to Google Drive
+        logger.info(f"Step 4/5: Uploading to Google Drive for task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
@@ -369,31 +377,8 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         
         upload_results = upload_to_drive(task_id, fragments)
         
-        # Step 4: Log to Google Sheets (non-critical)
-        logger.info(f"Step 4/5: Logging to Google Sheets for task {task_id}")
-        with get_sync_db_session() as session:
-            task = session.get(VideoTaskModel, task_id)
-            if task:
-                task.progress = 80
-                session.commit()
-        
-        sheets_result = {"success": False, "error": "Not attempted"}
-        try:
-            sheets_result = log_to_sheets(
-                task_id=task_id,
-                download_result=download_result,
-                fragments=fragments,
-                upload_results=upload_results,
-                settings_dict=settings_dict
-            )
-            logger.info(f"Google Sheets logging completed for task {task_id}")
-        except Exception as sheets_error:
-            logger.warning(f"Google Sheets logging failed for task {task_id}: {sheets_error}")
-            # Continue execution even if Google Sheets fails
-            sheets_result = {"success": False, "error": str(sheets_error)}
-        
-        # Step 5: Finalize and cleanup
-        logger.info(f"Step 5/5: Finalizing task {task_id}")
+        # Step 5: Log to Google Sheets, Finalize, and Cleanup
+        logger.info(f"Step 5/5: Finalizing and cleaning up task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
@@ -415,11 +400,10 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
             "total_duration": sum(f["duration"] for f in fragments),
             "total_size_bytes": sum(f["size_bytes"] for f in fragments),
             "drive_uploads": len([r for r in upload_results if r.get("success")]),
-            "sheets_logged": sheets_result.get("success", False),
             "fragments": fragments
         }
         
-        logger.info(f"Optimized video processing chain completed for task {task_id}")
+        logger.info(f"FFmpeg-optimized video processing chain completed for task {task_id}")
         return result
         
     except Exception as exc:
@@ -438,206 +422,52 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         raise self.retry(exc=exc, countdown=2 ** self.request.retries, max_retries=5)
 
 
-def process_full_video(task_id: str, video_path: str, settings_dict: Dict[str, Any]) -> Dict[str, Any]:
+def get_user_settings(task_id: str) -> Dict[str, Any]:
     """
-    Process full video into professional shorts format and cut into fragments.
-    This uses MoviePy for better reliability and audio/subtitle handling.
-    
-    Args:
-        task_id: Task ID
-        video_path: Path to downloaded video
-        settings_dict: Processing settings
-        
-    Returns:
-        Dict with processing results including fragments
+    Retrieves user-specific settings and style preferences from the database.
     """
-    from app.database.models import VideoTask as VideoTaskModel
-    
-    # Create output directory
-    output_dir = f"/tmp/processed/{task_id}"
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Initialize processor
-    processor = VideoProcessorMoviePy(output_dir)
-    
-    # Get user ID from task
-    user_id = None
     with get_sync_db_session() as session:
         task = session.get(VideoTaskModel, task_id)
-        if task:
-            user_id = task.user_id
-    
-    # Get user style settings if user_id is available
-    title_color = "red"
-    title_size = "medium"
-    subtitle_color = "white"
-    subtitle_size = "medium"
-    font_name = "Kaph_Regular"
-    
-    if user_id:
-        try:
-            # Get user settings directly from database using sync session
-            with get_sync_db_session() as session:
-                user = session.get(User, user_id)
-                if user and user.settings:
-                    # Extract settings from user.settings JSON
-                    settings = user.settings
-                    
-                    # Get title settings
-                    title_style = settings.get('title_style', {})
-                    title_color = title_style.get('color', 'white')
-                    title_size = title_style.get('size', 'medium')
-                    font_name = title_style.get('font', 'DejaVu Sans Bold')
-                    
-                    # Get subtitle settings
-                    subtitle_style = settings.get('subtitle_style', {})
-                    subtitle_color = subtitle_style.get('color', 'white')
-                    subtitle_size = subtitle_style.get('size', 'medium')
-                    
-                    logger.info(f"Retrieved user settings for {user_id}: title_color={title_color}, title_size={title_size}")
-                else:
-                    logger.info(f"No custom settings found for user {user_id}, using defaults")
-                    
-        except Exception as e:
-            logger.warning(f"Failed to get user settings for {user_id}: {e}, using defaults")
-    
-    # Get Kaph font path
-    kaph_font_path = "/fonts/Kaph/static/Kaph-Regular.ttf"
-    if not os.path.exists(kaph_font_path):
-        # Fallback to absolute path
-        kaph_font_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
-    
-    # logger.info(f"Available fonts: {list(fonts.keys())}")
-    logger.info(f"Processing full video with MoviePy for task {task_id}")
-    logger.info(f"Using font: {kaph_font_path}")
-    
-    # Process video
-    result = processor.process_video_with_moviepy(
-        video_path=video_path,
-        fragment_duration=settings_dict.get("duration", 30),
-        quality=settings_dict.get("quality", "1080p"),
-        title=settings_dict.get("title", ""),
-        title_color=title_color,
-        title_size=title_size,
-        subtitle_color=subtitle_color,
-        subtitle_size=subtitle_size,
-        font_path=kaph_font_path,  # Use Kaph font path instead of None
-        enable_subtitles=settings_dict.get("subtitles", True)
-    )
-    
-    logger.info(f"Full video processing completed for task {task_id}")
-    return result
+        if not task or not task.user_id:
+            logger.info("No user found for task, using default styles.")
+            return {"title_style": DEFAULT_TEXT_STYLES['title']}
+        
+        user = session.get(User, task.user_id)
+        if not user or not user.settings:
+            logger.info(f"No custom settings for user {task.user_id}, using defaults.")
+            return {"title_style": DEFAULT_TEXT_STYLES['title']}
+
+        settings = user.settings
+        title_style = settings.get('title_style', DEFAULT_TEXT_STYLES['title'])
+        
+        # Get font path from settings if available
+        font_name = title_style.get('font', 'Kaph-Regular')
+        font_path = f"/app/fonts/{font_name.replace(' ', '/')}/static/{font_name}-Regular.ttf"
+        if not os.path.exists(font_path):
+             font_path = f"/app/fonts/Kaph/static/Kaph-Regular.ttf" # Default fallback
+        
+        logger.info(f"Loaded settings for user {task.user_id}: {title_style}")
+        return {
+            "title_style": title_style,
+            "font_path": font_path
+        }
 
 
 def cut_into_fragments(task_id: str, processed_video_path: str, settings_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Cut processed video into fragments.
-    
-    Args:
-        task_id: Task ID
-        processed_video_path: Path to processed full video
-        settings_dict: Processing settings
-        
-    Returns:
-        List of fragment information
+    Cut processed video into fragments. This now correctly uses the FFmpeg processor.
     """
-    from app.video_processing.processor import VideoProcessor
-    import subprocess
-    
-    # Create output directory for fragments
     output_dir = f"/tmp/processed/{task_id}/fragments"
     os.makedirs(output_dir, exist_ok=True)
     
     # Initialize processor
     processor = VideoProcessor(output_dir)
     
-    # Get video info
-    video_info = processor.get_video_info(processed_video_path)
-    total_duration = video_info['duration']
-    fragment_duration = settings_dict.get("fragment_duration", 30)
-    
-    # Calculate fragments
-    if total_duration < fragment_duration:
-        num_fragments = 1
-        fragment_duration = int(total_duration)
-    else:
-        num_fragments = int(total_duration // fragment_duration)
-        if total_duration % fragment_duration > 10:
-            num_fragments += 1
-    
-    fragments = []
-    
-    for i in range(num_fragments):
-        start_time = i * fragment_duration
-        
-        if i == num_fragments - 1:
-            end_time = total_duration
-            actual_duration = total_duration - start_time
-        else:
-            end_time = start_time + fragment_duration
-            actual_duration = fragment_duration
-        
-        if actual_duration < 5:
-            continue
-        
-        fragment_filename = f"fragment_{i+1:03d}.mp4"
-        fragment_path = os.path.join(output_dir, fragment_filename)
-        
-        # Simple cut from processed video (no additional processing needed)
-        cmd = [
-            'ffmpeg',
-            '-i', processed_video_path,
-            '-ss', str(start_time),
-            '-t', str(actual_duration),
-            '-c', 'copy',  # Copy streams without re-encoding
-            '-y',
-            fragment_path
-        ]
-        
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300)
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to cut fragment {i+1}: {e}")
-            continue
-        
-        if os.path.exists(fragment_path):
-            file_size = os.path.getsize(fragment_path)
-            fragment_id = str(uuid.uuid4())
-            
-            fragment_info = {
-                'id': fragment_id,
-                'task_id': task_id,
-                'fragment_number': i + 1,
-                'filename': fragment_filename,
-                'local_path': fragment_path,
-                'duration': actual_duration,
-                'start_time': start_time,
-                'end_time': end_time,
-                'size_bytes': file_size,
-                'title': settings_dict.get('title', ''),
-                'subtitle_style': 'modern'
-            }
-            fragments.append(fragment_info)
-            
-            # Save fragment to database
-            with get_sync_db_session() as session:
-                fragment = VideoFragment(
-                    id=fragment_id,
-                    task_id=task_id,
-                    fragment_number=i + 1,
-                    filename=fragment_filename,
-                    local_path=fragment_path,
-                    duration=actual_duration,
-                    start_time=start_time,
-                    end_time=end_time,
-                    size_bytes=file_size,
-                    has_subtitles=settings_dict.get('enable_subtitles', True)
-                )
-                session.add(fragment)
-                session.commit()
-            
-            logger.info(f"Fragment {i+1}/{num_fragments} created for task {task_id}")
-    
+    fragments = processor.create_fragments(
+        video_path=processed_video_path,
+        fragment_duration=settings_dict.get("duration", 30),
+        title=settings_dict.get("title", "")
+    )
     return fragments
 
 
