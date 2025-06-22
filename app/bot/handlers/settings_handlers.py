@@ -9,6 +9,7 @@ from aiogram.fsm.state import StatesGroup, State
 
 from app.bot.keyboards.main_menu import (
     SettingsAction,
+    SettingsValueAction,
     StyleAction,
     get_back_keyboard,
     get_confirmation_keyboard,
@@ -17,6 +18,8 @@ from app.bot.keyboards.main_menu import (
     get_color_settings_keyboard,
     get_size_settings_keyboard
 )
+from app.bot.keyboards.font_keyboards import FontAction
+from app.bot.handlers.font_handlers import show_font_selection
 from app.config.constants import MENU_EMOJIS
 from app.database.connection import get_db_session
 from app.database.models import User
@@ -187,7 +190,7 @@ async def reset_settings_to_defaults(callback: CallbackQuery, state: FSMContext)
     await show_style_settings(callback)
 
 
-@router.callback_query(SettingsAction.filter(F.action == "back_to_settings"), SettingsStates.any())
+@router.callback_query(SettingsAction.filter(F.action == "back_to_settings"), SettingsStates)
 async def back_to_settings_menu(callback: CallbackQuery, state: FSMContext) -> None:
     """Go back to the main settings menu."""
     await show_settings_menu(callback, SettingsAction(action="open_settings_menu"), state)
@@ -195,8 +198,8 @@ async def back_to_settings_menu(callback: CallbackQuery, state: FSMContext) -> N
 
 # --- Title Settings Handlers ---
 
-@router.callback_query(SetValueAction.filter(F.entity == "title" and F.param == "color"), SettingsStates.title_settings)
-async def set_title_color(callback: CallbackQuery, callback_data: SetValueAction, state: FSMContext) -> None:
+@router.callback_query(SettingsValueAction.filter(F.entity == "title" and F.param == "color"), SettingsStates.title_settings)
+async def set_title_color(callback: CallbackQuery, callback_data: SettingsValueAction, state: FSMContext) -> None:
     """Set the color for the title."""
     user_id = callback.from_user.id
     color = callback_data.value
@@ -215,8 +218,8 @@ async def set_title_color(callback: CallbackQuery, callback_data: SetValueAction
     await show_title_settings(callback, SettingsAction(action="title_settings"), state)
 
 
-@router.callback_query(SetValueAction.filter(F.entity == "title" and F.param == "size"), SettingsStates.title_settings)
-async def set_title_size(callback: CallbackQuery, callback_data: SetValueAction, state: FSMContext) -> None:
+@router.callback_query(SettingsValueAction.filter(F.entity == "title" and F.param == "size"), SettingsStates.title_settings)
+async def set_title_size(callback: CallbackQuery, callback_data: SettingsValueAction, state: FSMContext) -> None:
     """Set the size for the title."""
     user_id = callback.from_user.id
     size = callback_data.value
@@ -246,14 +249,13 @@ async def open_font_settings(callback: CallbackQuery, state: FSMContext) -> None
     # This simulates a user command to open the font menu
     # Note: This is a simplified approach.
     # A full solution might involve deeper integration between handlers.
-    from app.bot.handlers.font_handlers import show_font_selection
     await show_font_selection(callback, FontAction(action="select_font"), state)
 
 
 # --- Subtitle Settings Handlers ---
 
-@router.callback_query(SetValueAction.filter(F.entity == "subtitle" and F.param == "color"), SettingsStates.subtitle_settings)
-async def set_subtitle_color(callback: CallbackQuery, callback_data: SetValueAction, state: FSMContext) -> None:
+@router.callback_query(SettingsValueAction.filter(F.entity == "subtitle" and F.param == "color"), SettingsStates.subtitle_settings)
+async def set_subtitle_color(callback: CallbackQuery, callback_data: SettingsValueAction, state: FSMContext) -> None:
     """Set the color for the subtitle."""
     user_id = callback.from_user.id
     color = callback_data.value
@@ -272,8 +274,8 @@ async def set_subtitle_color(callback: CallbackQuery, callback_data: SetValueAct
     await show_subtitle_settings(callback, SettingsAction(action="subtitle_settings"), state)
 
 
-@router.callback_query(SetValueAction.filter(F.entity == "subtitle" and F.param == "size"), SettingsStates.subtitle_settings)
-async def set_subtitle_size(callback: CallbackQuery, callback_data: SetValueAction, state: FSMContext) -> None:
+@router.callback_query(SettingsValueAction.filter(F.entity == "subtitle" and F.param == "size"), SettingsStates.subtitle_settings)
+async def set_subtitle_size(callback: CallbackQuery, callback_data: SettingsValueAction, state: FSMContext) -> None:
     """Set the size for the subtitle."""
     user_id = callback.from_user.id
     size = callback_data.value
@@ -473,7 +475,7 @@ async def show_style_settings(callback: CallbackQuery) -> None:
     )
 
 
-@router.callback_query(StyleAction.filter(F.action == "text_settings"))
+@router.callback_query(StyleAction.filter(F.action == "text_settings"), SettingsStates.main)
 async def show_text_settings(callback: CallbackQuery, callback_data: StyleAction) -> None:
     """
     Show text settings for title or subtitle.
@@ -613,13 +615,13 @@ async def set_text_color(callback: CallbackQuery, callback_data: StyleAction) ->
     # Save color to user settings
     settings_key = f"{text_type}_style"
     success = await UserSettingsService.set_style_setting(user_id, settings_key, 'color', color)
-    
+
     if success:
         color_name = UserSettingsService.get_color_name(color)
         await callback.answer(f"✅ Цвет {text_label} изменен на {color_name}", show_alert=True)
     else:
         await callback.answer("❌ Ошибка сохранения настроек", show_alert=True)
-    
+        
     # Return to color settings
     await show_color_settings(callback, callback_data)
 
@@ -641,13 +643,13 @@ async def set_text_size(callback: CallbackQuery, callback_data: StyleAction) -> 
     # Save size to user settings
     settings_key = f"{text_type}_style"
     success = await UserSettingsService.set_style_setting(user_id, settings_key, 'size', size)
-    
+
     if success:
         size_name = UserSettingsService.get_size_name(size)
         await callback.answer(f"✅ Размер {text_label} изменен на {size_name}", show_alert=True)
     else:
         await callback.answer("❌ Ошибка сохранения настроек", show_alert=True)
-    
+
     # Return to size settings
     await show_size_settings(callback, callback_data)
 
