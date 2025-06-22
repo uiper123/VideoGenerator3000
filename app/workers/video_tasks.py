@@ -340,7 +340,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         # Step 3: Cut the processed video into fragments
         logger.info(f"Step 3/5: Fragmenting video for task {task_id}")
         processed_video_path = processing_result['processed_video_path']
-        fragments = processor.cut_into_fragments(
+        fragments = processor.create_fragments(
             video_path=processed_video_path,
             fragment_duration=settings_dict.get("duration", 30),
             title=settings_dict.get("title", "")
