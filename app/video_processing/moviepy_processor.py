@@ -261,7 +261,9 @@ class VideoProcessorMoviePy:
             title,
             fontsize=font_size,
             color=text_color,
-            font=font_path if font_path and os.path.exists(font_path) else 'DejaVu-Sans-Bold'
+            font=font_path if font_path and os.path.exists(font_path) else 'DejaVu-Sans-Bold',
+            stroke_color='black',
+            stroke_width=2
         ).set_duration(video.duration).set_position(('center', 'top')).set_margin(20)
         
         # Composite video with title
@@ -370,7 +372,9 @@ class VideoProcessorMoviePy:
                 subtitle['text'],
                 fontsize=font_size,
                 color=text_color,
-                font=font_path if font_path and os.path.exists(font_path) else 'DejaVu-Sans-Bold'
+                font=font_path if font_path and os.path.exists(font_path) else 'DejaVu-Sans-Bold',
+                stroke_color='black',
+                stroke_width=2
             ).set_start(subtitle['start']).set_duration(subtitle['end'] - subtitle['start']).set_position(('center', 0.8), relative=True)
             
             subtitle_clips.append(subtitle_clip)

@@ -21,9 +21,8 @@ RUN apt-get update && apt-get install -y \
     imagemagick \
     && rm -rf /var/lib/apt/lists/*
 
-# Relax ImageMagick security policy to allow MoviePy to generate text with strokes.
-# This finds the policy for "@" paths and changes its rights from "none" to "read|write".
-RUN sed -i '/<policy domain="path" pattern="@/s/rights="none"/rights="read|write"/' /etc/ImageMagick-6/policy.xml
+# Copy the custom ImageMagick policy to fix MoviePy text rendering issues.
+COPY policy.xml /etc/ImageMagick-6/policy.xml
 
 # Install Python dependencies
 COPY requirements.txt .
