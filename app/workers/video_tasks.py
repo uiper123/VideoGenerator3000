@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.workers.celery_app import VideoTask
-from app.config.constants import VideoStatus, DEFAULT_TEXT_STYLES
+from app.config.constants import VideoStatus, DEFAULT_TEXT_STYLES, get_subtitle_font_path
 from app.config.settings import settings
 from app.database.models import VideoTask as VideoTaskModel, VideoFragment, User
 from app.video_processing.downloader import VideoDownloader
@@ -353,9 +353,10 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 os.makedirs(chunk_output_dir, exist_ok=True)
                 chunk_processor = VideoProcessor(chunk_output_dir)
                 
-                # Process chunk with title including part number
+                # Process chunk with title including part number only if enabled and multiple chunks
                 chunk_title = settings_dict.get("title", "")
-                if len(video_chunks) > 1 and chunk_title:
+                add_part_numbers = settings_dict.get("add_part_numbers", False)  # Default: disabled
+                if len(video_chunks) > 1 and chunk_title and add_part_numbers:
                     chunk_title = f"{chunk_title} - Часть {i+1}"
                 
                 chunk_settings = processing_settings.copy()
@@ -404,10 +405,19 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
             processed_path = chunk_info['processed_path']
             
             # Create fragments from this chunk
+            chunk_title = settings_dict.get('title', '')
+            add_part_numbers = settings_dict.get("add_part_numbers", False)
+            
+            # Only add part number if explicitly enabled and multiple chunks exist
+            if len(processed_chunks) > 1 and chunk_title and add_part_numbers:
+                fragment_title = f"{chunk_title} - Часть {chunk_info['chunk_number']}"
+            else:
+                fragment_title = chunk_title
+            
             chunk_fragments = chunk_processor.create_fragments(
                 video_path=processed_path,
                 fragment_duration=settings_dict.get("duration", 30),
-                title=f"{settings_dict.get('title', '')} - Часть {chunk_info['chunk_number']}" if len(processed_chunks) > 1 else settings_dict.get('title', '')
+                title=fragment_title
             )
             
             # Renumber fragments globally and update paths
@@ -456,14 +466,36 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         successful_uploads = [r for r in upload_results if r.get("success")]
         logger.info(f"Successfully uploaded {len(successful_uploads)}/{len(fragments)} files to Google Drive.")
 
+        # Update fragments with Google Drive URLs
+        for i, upload_result in enumerate(upload_results):
+            if upload_result.get("success") and i < len(fragments):
+                fragment_data = fragments[i]
+                drive_url = upload_result.get("file_url", "")
+                
+                # Update fragment in database with drive URL
+                with get_sync_db_session() as session:
+                    fragment = session.get(VideoFragment, fragment_data['id'])
+                    if fragment and drive_url:
+                        fragment.drive_url = drive_url
+                        session.commit()
+                        fragment_data['drive_url'] = drive_url
+                        logger.info(f"Updated fragment {fragment.fragment_number} with drive URL")
+
         # Step 7: Log to Google Sheets
         logger.info(f"Step 7/7: Logging results to Google Sheets for task {task_id}")
+        
+        # Get user ID from task
+        with get_sync_db_session() as session:
+            task = session.get(VideoTaskModel, task_id)
+            user_id_for_sheets = task.user_id if task else 0
+        
         log_to_sheets(
             task_id=task_id,
             download_result=download_result,
             fragments=fragments,
             upload_results=upload_results,
-            settings_dict=settings_dict
+            settings_dict=settings_dict,
+            user_id=user_id_for_sheets
         )
         
         # Step 8: Finalize and Cleanup
@@ -528,12 +560,18 @@ def get_user_settings(task_id: str) -> Dict[str, Any]:
         task = session.get(VideoTaskModel, task_id)
         if not task or not task.user_id:
             logger.info("No user found for task, using default styles.")
-            return {"title_style": DEFAULT_TEXT_STYLES['title']}
+            return {
+                "title_style": DEFAULT_TEXT_STYLES['title'],
+                "subtitle_font_path": get_subtitle_font_path()
+            }
         
         user = session.get(User, task.user_id)
         if not user or not user.settings:
             logger.info(f"No custom settings for user {task.user_id}, using defaults.")
-            return {"title_style": DEFAULT_TEXT_STYLES['title']}
+            return {
+                "title_style": DEFAULT_TEXT_STYLES['title'],
+                "subtitle_font_path": get_subtitle_font_path()
+            }
 
         settings = user.settings
         title_style = settings.get('title_style', DEFAULT_TEXT_STYLES['title'])
@@ -547,7 +585,8 @@ def get_user_settings(task_id: str) -> Dict[str, Any]:
         logger.info(f"Loaded settings for user {task.user_id}: {title_style}")
         return {
             "title_style": title_style,
-            "font_path": font_path
+            "font_path": font_path,
+            "subtitle_font_path": get_subtitle_font_path()
         }
 
 
@@ -601,7 +640,8 @@ def log_to_sheets(
     download_result: Dict[str, Any],
     fragments: List[Dict[str, Any]],
     upload_results: List[Dict[str, Any]],
-    settings_dict: Dict[str, Any]
+    settings_dict: Dict[str, Any],
+    user_id: int
 ) -> Dict[str, Any]:
     """
     Log processing data to Google Sheets.
@@ -612,6 +652,7 @@ def log_to_sheets(
         fragments: Fragment data
         upload_results: Upload results
         settings_dict: Processing settings
+        user_id: User ID for logging
         
     Returns:
         Logging result
@@ -626,7 +667,7 @@ def log_to_sheets(
     # Log to sheets
     result = sheets_service.log_video_processing(
         task_id=task_id,
-        user_id=0,  # Will be updated with actual user ID
+        user_id=user_id,
         video_title=download_result.get('title', 'Unknown'),
         source_url=download_result.get('url', ''),
         fragments_count=len(fragments),
@@ -737,7 +778,7 @@ def update_statistics() -> Dict[str, Any]:
 @shared_task(base=VideoTask)
 def send_completion_notification(user_id: int, task_id: str, fragments_count: int) -> Dict[str, Any]:
     """
-    Send completion notification to user.
+    Send completion notification to user with Drive links file.
     
     Args:
         user_id: User ID to send notification to
@@ -751,37 +792,88 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
     
     try:
         import asyncio
+        import tempfile
         from aiogram import Bot
+        from aiogram.types import FSInputFile
         from app.config.settings import settings
         from app.bot.keyboards.main_menu import get_back_keyboard
         
+        # Get actual fragments count and drive links from database
+        with get_sync_db_session() as session:
+            task = session.get(VideoTaskModel, task_id)
+            if not task:
+                logger.error(f"Task {task_id} not found in database")
+                return {"error": "Task not found"}
+            
+            fragments = session.query(VideoFragment).filter_by(task_id=task_id).all()
+            actual_fragments_count = len(fragments)
+            
+            # Get drive links
+            drive_links = []
+            for fragment in fragments:
+                if fragment.drive_url:
+                    drive_links.append(f"Фрагмент {fragment.fragment_number}: {fragment.drive_url}")
+        
         async def send_notification():
             bot = Bot(token=settings.telegram_bot_token)
+            
+            # Create links file if we have drive links
+            links_file_path = None
+            if drive_links:
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+                    f.write(f"🎬 Ссылки на обработанные видео\n")
+                    f.write(f"📋 ID задачи: {task_id}\n")
+                    f.write(f"📊 Всего фрагментов: {actual_fragments_count}\n")
+                    f.write(f"📅 Дата создания: {task.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                    
+                    for link in drive_links:
+                        f.write(f"{link}\n")
+                    
+                    f.write(f"\n✅ Все файлы готовы к использованию!")
+                    links_file_path = f.name
             
             text = f"""
 ✅ <b>Обработка завершена!</b>
 
 📋 ID задачи: <code>{task_id}</code>
-📊 Создано фрагментов: {fragments_count}
+📊 Создано фрагментов: {actual_fragments_count}
 
 <b>Результаты:</b>
-• {fragments_count} фрагментов в формате 9:16
+• {actual_fragments_count} фрагментов в формате 9:16
 • Качественная обработка видео
 • Готово к использованию
 
-Файлы сохранены на сервере и готовы к скачиванию.
+{f"📁 Файлы загружены на Google Drive" if drive_links else "📁 Файлы сохранены на сервере"}
             """
             
             try:
+                # Send main notification
                 await bot.send_message(
                     chat_id=user_id,
                     text=text,
                     reply_markup=get_back_keyboard("main_menu"),
                     parse_mode="HTML"
                 )
+                
+                # Send links file if available
+                if links_file_path and drive_links:
+                    document = FSInputFile(links_file_path, filename=f"video_links_{task_id[:8]}.txt")
+                    await bot.send_document(
+                        chat_id=user_id,
+                        document=document,
+                        caption="📎 Файл со ссылками на все фрагменты"
+                    )
+                    
+                    # Clean up temp file
+                    import os
+                    os.unlink(links_file_path)
+                
                 logger.info(f"Completion notification sent to user {user_id}")
             except Exception as e:
                 logger.error(f"Failed to send notification to user {user_id}: {e}")
+                if links_file_path:
+                    import os
+                    os.unlink(links_file_path)
             finally:
                 await bot.session.close()
         
@@ -794,7 +886,8 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
         return {
             "user_id": user_id,
             "task_id": task_id,
-            "notification_sent": True
+            "notification_sent": True,
+            "fragments_count": actual_fragments_count
         }
         
     except Exception as exc:

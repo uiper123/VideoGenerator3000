@@ -196,6 +196,12 @@ def get_video_settings_keyboard() -> InlineKeyboardMarkup:
         callback_data=SettingsValueAction(action="title", value="set")
     )
     
+    # Part numbering setting
+    builder.button(
+        text="🔢 Нумерация частей: ВЫКЛ",
+        callback_data=SettingsValueAction(action="part_numbers", value="toggle")
+    )
+    
     # Confirm button
     builder.button(
         text="✅ Начать обработку",
@@ -208,8 +214,8 @@ def get_video_settings_keyboard() -> InlineKeyboardMarkup:
         callback_data=MenuAction(action="video_menu")
     )
     
-    # Arrange buttons: 4 duration, 3 quality, 1 subtitles, 1 title, 1 confirm, 1 back
-    builder.adjust(4, 3, 1, 1, 1, 1)
+    # Arrange buttons: 4 duration, 3 quality, 1 subtitles, 1 title, 1 part numbers, 1 confirm, 1 back
+    builder.adjust(4, 3, 1, 1, 1, 1, 1)
     
     return builder.as_markup()
 

@@ -198,6 +198,11 @@ class VideoProcessor:
         # Custom fonts from fonts directory
         fonts_dir = "/app/fonts"
         if os.path.exists(fonts_dir):
+            # Add Troika font specifically
+            troika_path = os.path.join(fonts_dir, "troika.ttf")
+            if os.path.exists(troika_path):
+                fonts["Troika"] = troika_path
+            
             for font_family in os.listdir(fonts_dir):
                 family_path = os.path.join(fonts_dir, font_family)
                 if os.path.isdir(family_path):

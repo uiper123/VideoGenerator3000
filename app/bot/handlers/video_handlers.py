@@ -202,11 +202,13 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
         "fragment_duration": 30,
         "quality": "1080p",
         "enable_subtitles": True,
-        "title": ""
+        "title": "",
+        "add_part_numbers": False
     })
     
     title_text = settings.get('title', '')
     title_display = f'"{title_text}"' if title_text else 'Не задан'
+    part_numbers_status = 'Включена' if settings.get('add_part_numbers', False) else 'Отключена'
     
     text = f"""
 ⚙️ <b>Настройки обработки</b>
@@ -218,16 +220,92 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
 📊 Качество: {settings['quality']}
 📝 Субтитры: {'Включены' if settings['enable_subtitles'] else 'Отключены'}
 📋 Заголовок: {title_display}
+🔢 Нумерация частей: {part_numbers_status}
 
 <b>Результат:</b>
 🎬 Профессиональные шортсы с размытым фоном
 📱 Формат 9:16 для TikTok/YouTube Shorts
 🎯 Анимированные субтитры по словам
 
+<b>О нумерации частей:</b>
+{'✅ К названиям длинных видео будет добавляться "Часть 1", "Часть 2" и т.д.' if settings.get('add_part_numbers', False) else '❌ Названия частей останутся без нумерации (для видео меньше 15 минут)'}
+
 Настройте параметры обработки или нажмите "Начать обработку" для запуска с текущими настройками.
     """
     
-    keyboard = get_video_settings_keyboard()
+    # Create dynamic keyboard with current settings
+    from app.bot.keyboards.main_menu import InlineKeyboardBuilder, SettingsValueAction, VideoAction, MenuAction, MENU_EMOJIS
+    
+    builder = InlineKeyboardBuilder()
+    
+    # Duration settings
+    builder.button(
+        text="⏱️ 15 сек",
+        callback_data=SettingsValueAction(action="duration", value="15")
+    )
+    builder.button(
+        text="⏱️ 30 сек",
+        callback_data=SettingsValueAction(action="duration", value="30")
+    )
+    builder.button(
+        text="⏱️ 60 сек",
+        callback_data=SettingsValueAction(action="duration", value="60")
+    )
+    builder.button(
+        text="⏱️ Кастом",
+        callback_data=SettingsValueAction(action="duration", value="custom")
+    )
+    
+    # Quality settings
+    builder.button(
+        text="📊 720p",
+        callback_data=SettingsValueAction(action="quality", value="720p")
+    )
+    builder.button(
+        text="📊 1080p",
+        callback_data=SettingsValueAction(action="quality", value="1080p")
+    )
+    builder.button(
+        text="📊 4K",
+        callback_data=SettingsValueAction(action="quality", value="4k")
+    )
+    
+    # Subtitle settings
+    subtitles_text = "📝 Субтитры: ВКЛ" if settings.get('enable_subtitles', True) else "📝 Субтитры: ВЫКЛ"
+    builder.button(
+        text=subtitles_text,
+        callback_data=SettingsValueAction(action="subtitles", value="toggle")
+    )
+    
+    # Title setting
+    builder.button(
+        text="📋 Заголовок",
+        callback_data=SettingsValueAction(action="title", value="set")
+    )
+    
+    # Part numbering setting with dynamic text
+    part_numbers_text = "🔢 Нумерация частей: ВКЛ" if settings.get('add_part_numbers', False) else "🔢 Нумерация частей: ВЫКЛ"
+    builder.button(
+        text=part_numbers_text,
+        callback_data=SettingsValueAction(action="part_numbers", value="toggle")
+    )
+    
+    # Confirm button
+    builder.button(
+        text="✅ Начать обработку",
+        callback_data=VideoAction(action="start_processing")
+    )
+    
+    # Back button
+    builder.button(
+        text=f"{MENU_EMOJIS['back']} Назад",
+        callback_data=MenuAction(action="video_menu")
+    )
+    
+    # Arrange buttons: 4 duration, 3 quality, 1 subtitles, 1 title, 1 part numbers, 1 confirm, 1 back
+    builder.adjust(4, 3, 1, 1, 1, 1, 1)
+    
+    keyboard = builder.as_markup()
     
     if isinstance(message, Message):
         await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
@@ -323,6 +401,36 @@ async def toggle_subtitles_setting(callback: CallbackQuery, state: FSMContext) -
     
     # Toggle subtitles
     settings["enable_subtitles"] = not settings.get("enable_subtitles", True)
+    await state.update_data(settings=settings)
+    
+    # Show updated settings
+    source = data.get("source_url", data.get("file_name", "Unknown"))
+    await show_video_settings(callback, state, source)
+
+
+@router.callback_query(SettingsValueAction.filter(F.action == "part_numbers"))
+async def toggle_part_numbers_setting(callback: CallbackQuery, state: FSMContext) -> None:
+    """
+    Toggle part numbers setting.
+    
+    Args:
+        callback: Callback query
+        state: FSM context
+    """
+    # Get current state data
+    data = await state.get_data()
+    settings = data.get("settings", {
+        "fragment_duration": 30,
+        "quality": "1080p",
+        "enable_subtitles": True,
+        "add_part_numbers": False
+    })
+    
+    # Ensure we're in the right state
+    await state.set_state(VideoProcessingStates.configuring_settings)
+    
+    # Toggle part numbers
+    settings["add_part_numbers"] = not settings.get("add_part_numbers", False)
     await state.update_data(settings=settings)
     
     # Show updated settings
@@ -457,10 +565,23 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
     user_id = callback.from_user.id
     data = await state.get_data()
     
-    # Create video task in database
-    task_id = str(uuid.uuid4())
-    
     async with get_db_session() as session:
+        # Check for existing active tasks
+        from sqlalchemy import select
+        existing_task = await session.scalar(
+            select(VideoTask).where(
+                VideoTask.user_id == user_id,
+                VideoTask.status.in_([VideoStatus.PENDING, VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING])
+            )
+        )
+        
+        if existing_task:
+            await callback.answer("⚠️ У вас уже есть активная задача обработки!", show_alert=True)
+            return
+        
+        # Create video task in database
+        task_id = str(uuid.uuid4())
+        
         # Get or create user
         user = await session.get(User, user_id)
         if not user:

@@ -15,8 +15,13 @@ from app.config.constants import (
     SHORTS_FPS, 
     SHORTS_BITRATE,
     MIN_FRAGMENT_DURATION,
-    MAX_FRAGMENT_DURATION
+    MAX_FRAGMENT_DURATION,
+    get_subtitle_font_path,
+    get_subtitle_font_name,
+    get_subtitle_font_dir
 )
+from app.config.settings import settings
+from app.video_processing.speech_recognition import SpeechRecognizer
 
 # Настройки стилей для текста
 DEFAULT_TEXT_STYLES = {
@@ -884,7 +889,10 @@ class VideoProcessor:
                         border_color = style['border_color']
                         border_width = max(2, style['border_width'] - 1)  # Немного тоньше для классического стиля
                     
-                    subtitle_filter = f"drawtext=text='{word_escaped}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:fontsize={font_size}:fontcolor={text_color}:bordercolor={border_color}:borderw={border_width}:x=(w-text_w)/2:y={subtitle_y}:enable='between(t,{word_start},{word_end})'"
+                    # Use Troika font for subtitles
+                    subtitle_font = get_subtitle_font_path()
+                    
+                    subtitle_filter = f"drawtext=text='{word_escaped}':fontfile={subtitle_font}:fontsize={font_size}:fontcolor={text_color}:bordercolor={border_color}:borderw={border_width}:x=(w-text_w)/2:y={subtitle_y}:enable='between(t,{word_start},{word_end})'"
                     
                     subtitle_filters.append(subtitle_filter)
             
@@ -1387,8 +1395,14 @@ class VideoProcessor:
                 font_dir_for_ffmpeg = "/usr/share/fonts/truetype/dejavu"
                 font_name_for_style = "DejaVu Sans"
 
+        # Separate font configuration for subtitles (Troika)
+        subtitle_font_path = get_subtitle_font_path()
+        subtitle_font_dir = get_subtitle_font_dir()
+        subtitle_font_name = get_subtitle_font_name()
+
         # Sanitize paths for FFmpeg filters
         sanitized_font_dir = font_dir_for_ffmpeg.replace('\\', '/').replace(':', '\\:')
+        sanitized_subtitle_font_dir = subtitle_font_dir.replace('\\', '/').replace(':', '\\:')
 
         # --- Build Complex Filter ---
         video_filters = []
@@ -1431,11 +1445,11 @@ class VideoProcessor:
             sanitized_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
             sub_font_size = int(output_height * 0.01)   # Made smaller subtitles (reduced from 0.02 to 0.015)
             sub_style = (
-                f"FontName='{font_name_for_style}',FontSize={sub_font_size},"
+                f"FontName='{subtitle_font_name}',FontSize={sub_font_size},"
                 f"PrimaryColour=&HFFFFFF,BorderStyle=1,BackColour=&H00000000,"  # Transparent background
                 f"OutlineColour=&H000000,Outline=2,Shadow=1,Alignment=2,MarginV=60"  # Better outline and shadow
             )
-            subtitle_filter = f"subtitles='{sanitized_srt_path}':fontsdir='{sanitized_font_dir}':force_style='{sub_style}'"
+            subtitle_filter = f"subtitles='{sanitized_srt_path}':fontsdir='{sanitized_subtitle_font_dir}':force_style='{sub_style}'"
             video_filters.append(f"{current_stream}{subtitle_filter}[output]")
             current_stream = "[output]"
 
