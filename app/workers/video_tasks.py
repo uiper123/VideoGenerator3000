@@ -318,8 +318,8 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         os.makedirs(output_dir, exist_ok=True)
         processor = VideoProcessor(output_dir)
         
-        # Split video into chunks if longer than 15 minutes (900 seconds)
-        chunk_duration = 900  # 15 minutes per chunk
+        # Split video into chunks if longer than 5 minutes (300 seconds)
+        chunk_duration = 300  # 5 minutes per chunk
         video_chunks = processor.split_video(download_result["local_path"], chunk_duration)
         
         logger.info(f"Video split into {len(video_chunks)} chunks for processing")
