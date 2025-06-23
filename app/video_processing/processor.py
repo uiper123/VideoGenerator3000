@@ -1393,11 +1393,15 @@ class VideoProcessor:
         video_filters.append("[0:v]split=2[bg][main]")
         video_filters.append(f"[bg]scale={output_width}:{output_height}:force_original_aspect_ratio=increase,crop={output_width}:{output_height},gblur=sigma=20[bg_blurred]")
         
-        # 2. Main video (scaled and centered) - Fixed positioning
-        main_height = int(output_height * 0.65)  # Reduced from 0.7 to 0.65 for better centering
-        main_area_top = int(output_height * 0.175)  # Adjusted from 0.15 to 0.175 for better centering
-        video_filters.append(f"[main]scale='min({output_width},iw*{main_height}/ih)':'min({main_height},ih)'[main_scaled]")
-        video_filters.append(f"[bg_blurred][main_scaled]overlay=(W-w)/2:{main_area_top}[layout]")
+        # 2. Main video (scaled and centered with correct aspect ratio) - Fixed positioning  
+        main_height = int(output_height * 0.65)  # Height of the main video area
+        main_area_top = int(output_height * 0.175)  # Top position of main video area
+        
+        # Scale maintaining aspect ratio, crop if needed to fit area
+        # This will preserve correct proportions and crop sides if necessary
+        video_filters.append(f"[main]scale='if(gte(a,{output_width}/{main_height}),{output_width},-1)':'if(gte(a,{output_width}/{main_height}),-1,{main_height})'[main_scaled]")
+        video_filters.append(f"[main_scaled]crop={output_width}:{main_height}[main_cropped]")
+        video_filters.append(f"[bg_blurred][main_cropped]overlay=(W-w)/2:{main_area_top}[layout]")
 
         current_stream = "[layout]"
 
@@ -1406,7 +1410,7 @@ class VideoProcessor:
         if title:
             title_style = settings.get("title_style", DEFAULT_TEXT_STYLES['title'])
             title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
-            font_size = int(output_height * 0.03)  # Reduced from 0.04 to 0.03 (25% smaller)
+            font_size = int(output_height * 0.035)  # Increased from 0.03 to 0.035 (larger title)
             y_pos = int(output_height * 0.05)  # Keep position the same
             
             title_filter = (
@@ -1420,7 +1424,7 @@ class VideoProcessor:
         # 4. Subtitle overlay (if SRT file was created) - Fixed font and background
         if srt_path:
             sanitized_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
-            sub_font_size = int(output_height * 0.025)  # Slightly smaller subtitles
+            sub_font_size = int(output_height * 0.02)   # Made smaller subtitles (reduced from 0.025 to 0.02)
             sub_style = (
                 f"FontName='{font_name_for_style}',FontSize={sub_font_size},"
                 f"PrimaryColour=&HFFFFFF,BorderStyle=1,BackColour=&H00000000,"  # Transparent background
