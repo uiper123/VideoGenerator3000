@@ -299,7 +299,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
     
     try:
         # Step 1: Download video
-        logger.info(f"Step 1/5: Downloading video for task {task_id}")
+        logger.info(f"Step 1/6: Downloading video for task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
@@ -311,7 +311,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         download_result = download_video(task_id, url, quality)
         
         # Step 2: Full video processing using high-performance FFmpeg method
-        logger.info(f"Step 2/5: Processing full video with FFmpeg for task {task_id}")
+        logger.info(f"Step 2/6: Processing full video with FFmpeg for task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
@@ -338,7 +338,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         )
 
         # Step 3: Cut the processed video into fragments
-        logger.info(f"Step 3/5: Fragmenting video for task {task_id}")
+        logger.info(f"Step 3/6: Fragmenting video for task {task_id}")
         processed_video_path = processing_result['processed_video_path']
         fragments = processor.create_fragments(
             video_path=processed_video_path,
@@ -366,7 +366,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 fragment_data['id'] = fragment_model.id
 
         # Step 4: Upload to Google Drive
-        logger.info(f"Step 4/5: Uploading to Google Drive for task {task_id}")
+        logger.info(f"Step 4/6: Uploading to Google Drive for task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
@@ -375,9 +375,19 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 session.commit()
         
         upload_results = upload_to_drive(task_id, fragments)
+
+        # Step 5: Log to Google Sheets
+        logger.info(f"Step 5/6: Logging results to Google Sheets for task {task_id}")
+        log_to_sheets(
+            task_id=task_id,
+            download_result=download_result,
+            fragments=fragments,
+            upload_results=upload_results,
+            settings_dict=settings_dict
+        )
         
-        # Step 5: Log to Google Sheets, Finalize, and Cleanup
-        logger.info(f"Step 5/5: Finalizing and cleaning up task {task_id}")
+        # Step 6: Finalize and Cleanup
+        logger.info(f"Step 6/6: Finalizing and cleaning up task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
@@ -389,8 +399,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 send_completion_notification.apply_async(args=[task.user_id, task_id, len(fragments)])
         
         # Cleanup temporary files
-        logger.info(f"Step 5/5: Cleaning up temporary files for task {task_id}")
-        cleanup_temp_files([download_result["local_path"]] + [f["local_path"] for f in fragments])
+        cleanup_temp_files([download_result["local_path"], processing_result['processed_video_path']] + [f["local_path"] for f in fragments])
         
         result = {
             "task_id": task_id,
