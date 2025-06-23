@@ -520,11 +520,34 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
     
     # Start optimized Celery task chain
     from app.workers.video_tasks import process_video_chain_optimized
-    
+    from app.video_processing.downloader import VideoDownloader
+
     if data.get("input_type") == "url":
         # Process from URL with optimized workflow
         source_url = data.get("source_url")
-        process_video_chain_optimized.apply_async(args=[task_id, source_url, data.get("settings", {})])
+        settings = data.get("settings", {})
+
+        # Получаем длительность видео до скачивания
+        try:
+            downloader = VideoDownloader()
+            info = downloader.get_video_info(source_url)
+            duration_sec = int(info.get('duration', 0))
+        except Exception as e:
+            duration_sec = 0  # fallback
+
+        # Функция для расчёта лимита времени
+        def get_time_limit_for_video(video_duration_sec):
+            base = video_duration_sec * 1.5 * 1.2
+            return int(min(max(base, 600), 10800))  # от 10 минут до 3 часов
+
+        soft_limit = get_time_limit_for_video(duration_sec)
+        hard_limit = soft_limit + 300  # +5 минут запас
+
+        process_video_chain_optimized.apply_async(
+            args=[task_id, source_url, settings],
+            soft_time_limit=soft_limit,
+            time_limit=hard_limit
+        )
     else:
         # Process from uploaded file
         # TODO: Implement file processing
