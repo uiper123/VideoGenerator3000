@@ -1411,7 +1411,7 @@ class VideoProcessor:
         if title:
             title_style = settings.get("title_style", DEFAULT_TEXT_STYLES['title'])
             title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
-            font_size = int(output_height * 0.035)  # Increased from 0.03 to 0.035 (larger title)
+            font_size = int(output_height * 0.04)  # Increased from 0.035 to 0.04 (larger title)
             y_pos = int(output_height * 0.05)  # Keep position the same
             
             title_filter = (
@@ -1425,7 +1425,7 @@ class VideoProcessor:
         # 4. Subtitle overlay (if SRT file was created) - Fixed font and background
         if srt_path:
             sanitized_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
-            sub_font_size = int(output_height * 0.02)   # Made smaller subtitles (reduced from 0.025 to 0.02)
+            sub_font_size = int(output_height * 0.015)   # Made smaller subtitles (reduced from 0.02 to 0.015)
             sub_style = (
                 f"FontName='{font_name_for_style}',FontSize={sub_font_size},"
                 f"PrimaryColour=&HFFFFFF,BorderStyle=1,BackColour=&H00000000,"  # Transparent background
