@@ -109,8 +109,42 @@ class GoogleDriveService:
         
         if folder:
             logger.info(f"Folder '{folder.get('name')}' created with ID: {folder.get('id')}")
+            
+            # Share the folder with the user
+            user_email = os.getenv('USER_EMAIL')  # You can set this in Railway
+            if user_email:
+                self.share_folder_with_user(folder.get('id'), user_email)
+        
         return folder
-    
+
+    def share_folder_with_user(self, folder_id: str, user_email: str):
+        """Share a folder with a specific user email."""
+        if not self.service:
+            logger.info(f"Mock sharing folder {folder_id} with {user_email}")
+            return
+
+        try:
+            permission = {
+                'type': 'user',
+                'role': 'writer',  # Full edit access
+                'emailAddress': user_email
+            }
+            
+            request = self.service.permissions().create(
+                fileId=folder_id,
+                body=permission,
+                fields='id'
+            )
+            result = self._execute_request(request)
+            
+            if result:
+                logger.info(f"Successfully shared folder {folder_id} with {user_email}")
+            else:
+                logger.warning(f"Failed to share folder {folder_id} with {user_email}")
+                
+        except Exception as e:
+            logger.error(f"Error sharing folder {folder_id} with {user_email}: {e}")
+
     def find_folder(self, folder_name: str, parent_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Find a folder by name within an optional parent folder."""
         if not self.service:
