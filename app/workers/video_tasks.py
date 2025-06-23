@@ -297,6 +297,23 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
     """
     logger.info(f"Starting FFmpeg-optimized video processing chain for task {task_id}")
     
+    # Check for duplicate tasks - prevent multiple executions of the same task
+    with get_sync_db_session() as session:
+        task = session.get(VideoTaskModel, task_id)
+        if not task:
+            logger.error(f"Task {task_id} not found in database")
+            return {"error": "Task not found"}
+        
+        # If task is already completed or failed, don't process again
+        if task.status in [VideoStatus.COMPLETED, VideoStatus.FAILED]:
+            logger.info(f"Task {task_id} already {task.status.value}, skipping duplicate execution")
+            return {"error": f"Task already {task.status.value}"}
+        
+        # Check if task is already being processed by another worker
+        if task.status in [VideoStatus.PROCESSING, VideoStatus.UPLOADING] and self.request.retries == 0:
+            logger.warning(f"Task {task_id} is already being processed by another worker")
+            return {"error": "Task already being processed"}
+    
     try:
         # Step 1: Download video
         logger.info(f"Step 1/7: Downloading video for task {task_id}")
@@ -319,7 +336,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         processor = VideoProcessor(output_dir)
         
         # Split video into chunks if longer than 5 minutes (300 seconds)
-        chunk_duration = 300  # 5 minutes per chunk
+        chunk_duration = 600  # 5 minutes per chunk
         video_chunks = processor.split_video(download_result["local_path"], chunk_duration)
         
         logger.info(f"Video split into {len(video_chunks)} chunks for processing")
@@ -343,6 +360,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         # Process each chunk using the new FFmpeg-native method
         processed_chunks = []
         total_chunks = len(video_chunks)
+        failed_chunks = []
         
         for i, chunk_path in enumerate(video_chunks):
             try:
@@ -389,8 +407,15 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 
             except Exception as e:
                 logger.error(f"Failed to process chunk {i+1}: {e}")
-                # Continue with other chunks
+                failed_chunks.append(i + 1)
+                # Continue with other chunks instead of failing the entire task
                 continue
+        
+        # Check if we have enough successful chunks to continue
+        if len(processed_chunks) == 0:
+            raise RuntimeError(f"All chunks failed to process. Failed chunks: {failed_chunks}")
+        elif len(failed_chunks) > 0:
+            logger.warning(f"Some chunks failed ({failed_chunks}), but continuing with {len(processed_chunks)} successful chunks")
         
         logger.info(f"Processed {len(processed_chunks)}/{total_chunks} chunks successfully")
         
@@ -530,7 +555,8 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
             "total_duration": sum(f["duration"] for f in fragments),
             "total_size_bytes": sum(f["size_bytes"] for f in fragments),
             "drive_uploads": len(successful_uploads),
-            "fragments": fragments
+            "fragments": fragments,
+            "failed_chunks": failed_chunks if failed_chunks else None
         }
         
         logger.info(f"FFmpeg-optimized video processing chain completed for task {task_id}")
@@ -548,8 +574,20 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 task.error_message = str(exc)
                 session.commit()
         
-        # Retry the task with a backoff strategy
-        raise self.retry(exc=exc, countdown=2 ** self.request.retries, max_retries=5)
+        # More conservative retry logic - only retry on certain types of errors
+        # and with fewer retries
+        if self.request.retries < 2:  # Reduced from 5 to 2
+            # Only retry on temporary errors
+            if any(keyword in str(exc).lower() for keyword in ['timeout', 'connection', 'network', 'temporary']):
+                countdown = 120 * (self.request.retries + 1)  # Linear backoff instead of exponential
+                logger.info(f"Retrying task {task_id} (attempt {self.request.retries + 1}/2) in {countdown} seconds")
+                raise self.retry(exc=exc, countdown=countdown, max_retries=2)
+            else:
+                logger.error(f"Permanent error for task {task_id}, not retrying: {exc}")
+                raise exc
+        else:
+            logger.error(f"Max retries reached for task {task_id}")
+            raise exc
 
 
 def get_user_settings(task_id: str) -> Dict[str, Any]:
@@ -694,6 +732,66 @@ def cleanup_temp_files(file_paths: List[str]) -> None:
                 logger.info(f"Cleaned up: {file_path}")
         except Exception as e:
             logger.warning(f"Failed to cleanup {file_path}: {e}")
+
+
+@shared_task(base=VideoTask)
+def cleanup_stale_tasks() -> Dict[str, Any]:
+    """
+    Cleanup stale/hanging tasks that are stuck in processing state.
+    
+    Returns:
+        Dict with cleanup results
+    """
+    logger.info("Starting cleanup of stale tasks")
+    
+    try:
+        from datetime import datetime, timedelta
+        
+        # Consider tasks stuck in processing for more than 2 hours as stale
+        cutoff_time = datetime.utcnow() - timedelta(hours=2)
+        
+        tasks_cleaned = 0
+        
+        with get_sync_db_session() as session:
+            # Find stale tasks
+            from sqlalchemy import select, update
+            
+            result = session.execute(
+                select(VideoTaskModel).where(
+                    VideoTaskModel.status.in_([
+                        VideoStatus.PENDING, 
+                        VideoStatus.DOWNLOADING, 
+                        VideoStatus.PROCESSING, 
+                        VideoStatus.UPLOADING
+                    ]),
+                    VideoTaskModel.created_at <= cutoff_time
+                )
+            )
+            
+            stale_tasks = result.scalars().all()
+            
+            for task in stale_tasks:
+                # Update task status to failed
+                task.status = VideoStatus.FAILED
+                task.error_message = "Задача отменена из-за превышения времени выполнения (автоочистка)"
+                tasks_cleaned += 1
+                logger.info(f"Cleaned up stale task {task.id} (created at {task.created_at})")
+            
+            session.commit()
+        
+        cleanup_result = {
+            "tasks_cleaned": tasks_cleaned,
+            "cleanup_time": datetime.utcnow().isoformat()
+        }
+        
+        if tasks_cleaned > 0:
+            logger.info(f"Stale tasks cleanup completed: {cleanup_result}")
+        
+        return cleanup_result
+        
+    except Exception as exc:
+        logger.error(f"Stale tasks cleanup failed: {exc}")
+        raise
 
 
 @shared_task(base=VideoTask)

@@ -29,9 +29,9 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     
-    # Task execution
-    task_acks_late=True,
-    task_reject_on_worker_lost=True,
+    # Task execution - Updated for safer task handling
+    task_acks_late=False,  # Changed from True to prevent duplicate execution
+    task_reject_on_worker_lost=False,  # Changed from True to prevent auto-retry
     task_track_started=True,
     
     # Results
@@ -84,13 +84,19 @@ celery_app.conf.update(
             'schedule': 1800.0,  # Every 30 minutes
             'args': (),
         },
+        # Add task for cleaning up stale tasks
+        'cleanup_stale_tasks': {
+            'task': 'app.workers.video_tasks.cleanup_stale_tasks',
+            'schedule': 300.0,  # Every 5 minutes
+            'args': (),
+        },
     },
     
-    # Error handling
+    # Error handling - More conservative settings
     task_soft_time_limit=1800,  # 30 minutes
     task_time_limit=3600,       # 1 hour hard limit
-    task_max_retries=3,
-    task_default_retry_delay=60,
+    task_max_retries=2,         # Reduced from 3 to 2
+    task_default_retry_delay=120,  # Increased from 60 to 120 seconds
     
     # Monitoring
     worker_send_task_events=True,
@@ -113,9 +119,9 @@ class VideoTask(Task):
     
     abstract = True
     autoretry_for = (Exception,)
-    retry_kwargs = {"max_retries": 3, "countdown": 60}
-    retry_backoff = True
-    retry_backoff_max = 700
+    retry_kwargs = {"max_retries": 2, "countdown": 120}  # Reduced retries and increased delay
+    retry_backoff = False  # Disabled exponential backoff
+    retry_backoff_max = 300  # Reduced max backoff
     retry_jitter = False
 
     def on_success(self, retval, task_id, args, kwargs):
@@ -129,6 +135,27 @@ class VideoTask(Task):
     def on_retry(self, exc, task_id, args, kwargs, einfo):
         """Called on task retry."""
         logger.warning(f"Task {task_id} retry: {exc}")
+
+    def retry(self, args=None, kwargs=None, exc=None, throw=True, 
+              eta=None, countdown=None, max_retries=None, **options):
+        """Override retry method to add additional safety checks."""
+        
+        # Don't retry if we've exceeded our custom max retries
+        if self.request.retries >= 2:
+            logger.info(f"Task {self.request.id} max retries reached, not retrying")
+            if throw:
+                raise exc
+            return
+        
+        # Only retry on specific errors that are likely temporary
+        if exc and not any(keyword in str(exc).lower() for keyword in 
+                          ['timeout', 'connection', 'network', 'temporary', 'busy']):
+            logger.info(f"Task {self.request.id} permanent error, not retrying: {exc}")
+            if throw:
+                raise exc
+            return
+        
+        return super().retry(args, kwargs, exc, throw, eta, countdown, max_retries, **options)
 
 
 # Set the custom task class as default

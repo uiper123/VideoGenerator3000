@@ -584,8 +584,23 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
         existing_task = result.scalars().first()
         
         if existing_task:
-            await callback.answer("⚠️ У вас уже есть активная задача обработки!", show_alert=True)
-            return
+            # Check if the task is really active or just stuck
+            task_age = datetime.utcnow() - existing_task.created_at
+            if task_age.total_seconds() > 7200:  # 2 hours
+                # Task is too old, mark as failed and continue
+                existing_task.status = VideoStatus.FAILED
+                existing_task.error_message = "Задача отменена из-за превышения времени выполнения"
+                await session.commit()
+                logger.info(f"Marked old stuck task {existing_task.id} as failed for user {user_id}")
+            else:
+                await callback.answer(
+                    f"⚠️ У вас уже есть активная задача обработки!\n"
+                    f"ID: {str(existing_task.id)[:8]}\n"
+                    f"Статус: {existing_task.status.value}\n"
+                    f"Прогресс: {existing_task.progress or 0}%",
+                    show_alert=True
+                )
+                return
         
         # Mark old stale tasks as failed to clean up database
         stale_tasks_result = await session.execute(
@@ -629,6 +644,9 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
         )
         session.add(video_task)
         await session.commit()
+        
+        # Log task creation
+        logger.info(f"Created new video task {task_id} for user {user_id} with URL: {data.get('source_url', 'N/A')}")
     
     # Start processing workflow
     await state.set_state(VideoProcessingStates.processing)
