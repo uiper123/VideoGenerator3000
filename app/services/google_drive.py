@@ -159,8 +159,55 @@ class GoogleDriveService:
             return response['files'][0]
         return None
     
+    def make_file_public(self, file_id: str) -> Dict[str, Any]:
+        """Make a file publicly accessible and return direct download link."""
+        if not self.service:
+            logger.info(f"Mock making file public: {file_id}")
+            return {
+                "public": True,
+                "direct_link": f"https://mock.direct.link/{file_id}",
+                "view_link": f"https://mock.view.link/{file_id}"
+            }
+        
+        try:
+            # Create public permission
+            permission = {
+                'type': 'anyone',
+                'role': 'reader'
+            }
+            
+            request = self.service.permissions().create(
+                fileId=file_id,
+                body=permission,
+                fields='id'
+            )
+            result = self._execute_request(request)
+            
+            if result:
+                # Get file metadata to construct direct download link
+                file_metadata = self.service.files().get(fileId=file_id, fields='id,name,webViewLink').execute()
+                
+                # Create direct download link
+                direct_link = f"https://drive.google.com/uc?id={file_id}&export=download"
+                view_link = file_metadata.get('webViewLink', '')
+                
+                logger.info(f"File {file_id} made public. Direct link: {direct_link}")
+                return {
+                    "public": True,
+                    "direct_link": direct_link,
+                    "view_link": view_link,
+                    "file_name": file_metadata.get('name', '')
+                }
+            else:
+                logger.error(f"Failed to make file {file_id} public")
+                return {"public": False, "error": "Permission creation failed"}
+                
+        except Exception as e:
+            logger.error(f"Error making file {file_id} public: {e}")
+            return {"public": False, "error": str(e)}
+    
     def upload_file(self, file_path: str, folder_id: Optional[str] = None) -> Dict[str, Any]:
-        """Upload a single file to Google Drive."""
+        """Upload a single file to Google Drive and make it publicly accessible."""
         if not self.service:
             file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
             logger.info(f"Mock upload: {os.path.basename(file_path)} ({file_size} bytes) to folder {folder_id or 'root'}")
@@ -168,7 +215,9 @@ class GoogleDriveService:
                 "id": f"mock_file_id_{os.path.basename(file_path)}",
                 "name": os.path.basename(file_path),
                 "webViewLink": "https://mock.drive.url/file/view",
-                "size": file_size
+                "directLink": f"https://mock.direct.link/{os.path.basename(file_path)}",
+                "size": file_size,
+                "public": True
             }
 
         file_metadata = {
@@ -186,15 +235,101 @@ class GoogleDriveService:
         
         file = self._execute_request(request)
         if file:
-            logger.info(f"File '{file.get('name')}' uploaded with ID: {file.get('id')}")
+            file_id = file.get('id')
+            logger.info(f"File '{file.get('name')}' uploaded with ID: {file_id}")
+            
+            # Make file publicly accessible
+            public_result = self.make_file_public(file_id)
+            if public_result.get('public'):
+                file['directLink'] = public_result.get('direct_link')
+                file['public'] = True
+                logger.info(f"File {file_id} made public with direct link: {public_result.get('direct_link')}")
+            else:
+                file['public'] = False
+                logger.warning(f"Failed to make file {file_id} public: {public_result.get('error')}")
+        
         return file
+    
+    def make_multiple_files_public(self, file_ids: List[str]) -> List[Dict[str, Any]]:
+        """Make multiple files publicly accessible and return direct download links."""
+        if not self.service:
+            logger.info(f"Mock making {len(file_ids)} files public")
+            results = []
+            for file_id in file_ids:
+                results.append({
+                    "file_id": file_id,
+                    "public": True,
+                    "direct_link": f"https://mock.direct.link/{file_id}",
+                    "view_link": f"https://mock.view.link/{file_id}"
+                })
+            return results
+        
+        results = []
+        for file_id in file_ids:
+            try:
+                result = self.make_file_public(file_id)
+                result["file_id"] = file_id
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Failed to make file {file_id} public: {e}")
+                results.append({
+                    "file_id": file_id,
+                    "public": False,
+                    "error": str(e)
+                })
+        
+        successful = [r for r in results if r.get("public")]
+        failed = [r for r in results if not r.get("public")]
+        
+        logger.info(f"Made {len(successful)}/{len(file_ids)} files public. {len(failed)} failed.")
+        return results
+    
+    def test_public_access(self, file_id: str) -> Dict[str, Any]:
+        """Test if a file is publicly accessible."""
+        import requests
+        
+        direct_link = f"https://drive.google.com/uc?id={file_id}&export=download"
+        
+        try:
+            # Test with HEAD request to avoid downloading
+            response = requests.head(direct_link, timeout=10, allow_redirects=True)
+            
+            is_accessible = response.status_code == 200
+            
+            return {
+                "file_id": file_id,
+                "accessible": is_accessible,
+                "status_code": response.status_code,
+                "direct_link": direct_link,
+                "content_type": response.headers.get('content-type', ''),
+                "content_length": response.headers.get('content-length', '0')
+            }
+            
+        except Exception as e:
+            logger.warning(f"Failed to test access for file {file_id}: {e}")
+            return {
+                "file_id": file_id,
+                "accessible": False,
+                "error": str(e),
+                "direct_link": direct_link
+            }
     
     def upload_multiple_files(self, file_paths: List[str], folder_name: str) -> List[Dict[str, Any]]:
         """Upload multiple files to a specific folder, creating it if it doesn't exist."""
         if not self.service:
             results = []
             for file_path in file_paths:
-                 results.append(self.upload_file(file_path, folder_name))
+                result = self.upload_file(file_path, folder_name)
+                results.append({
+                    "success": True,
+                    "file_path": file_path,
+                    "file_name": os.path.basename(file_path),
+                    "file_id": result.get('id'),
+                    "file_url": result.get('webViewLink'),
+                    "direct_url": result.get('directLink'),  # Прямая ссылка для скачивания
+                    "size_bytes": result.get('size', 0),
+                    "public": True
+                })
             return results
 
         folder = self.create_folder(folder_name)
@@ -206,23 +341,38 @@ class GoogleDriveService:
         for file_path in file_paths:
             if not os.path.exists(file_path):
                 logger.warning(f"File not found, skipping upload: {file_path}")
+                upload_results.append({
+                    "success": False,
+                    "file_path": file_path,
+                    "error": "File not found"
+                })
                 continue
             
             result = self.upload_file(file_path, folder['id'])
-            if result:
+            if result and result.get('id'):
                 upload_results.append({
                     "success": True,
                     "file_path": file_path,
                     "file_name": result.get('name'),
                     "file_id": result.get('id'),
-                    "file_url": result.get('webViewLink'),
-                    "size_bytes": int(result.get('size', 0))
+                    "file_url": result.get('webViewLink'),  # Ссылка для просмотра
+                    "direct_url": result.get('directLink'),  # Прямая ссылка для скачивания
+                    "size_bytes": int(result.get('size', 0)),
+                    "public": result.get('public', False)
                 })
+                logger.info(f"Successfully uploaded and made public: {os.path.basename(file_path)}")
             else:
                 upload_results.append({
                     "success": False,
                     "file_path": file_path,
                     "error": "Upload failed"
                 })
+                logger.error(f"Failed to upload: {file_path}")
 
+        # Log summary
+        successful_uploads = [r for r in upload_results if r.get("success")]
+        failed_uploads = [r for r in upload_results if not r.get("success")]
+        
+        logger.info(f"Upload summary for folder '{folder_name}': {len(successful_uploads)} successful, {len(failed_uploads)} failed")
+        
         return upload_results 

@@ -495,16 +495,36 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         for i, upload_result in enumerate(upload_results):
             if upload_result.get("success") and i < len(fragments):
                 fragment_data = fragments[i]
-                drive_url = upload_result.get("file_url", "")
+                
+                # Используем прямую ссылку для скачивания вместо view ссылки
+                drive_url = upload_result.get("direct_url", "")  # Изменено с file_url на direct_url
+                view_url = upload_result.get("file_url", "")     # Ссылка для просмотра
                 
                 # Update fragment in database with drive URL
                 with get_sync_db_session() as session:
                     fragment = session.get(VideoFragment, fragment_data['id'])
                     if fragment and drive_url:
                         fragment.drive_url = drive_url
+                        # Добавляем также view URL в метаданные если нужно
+                        if not hasattr(fragment, 'metadata') or fragment.metadata is None:
+                            fragment.metadata = {}
+                        fragment.metadata['view_url'] = view_url
+                        fragment.metadata['public'] = upload_result.get('public', False)
+                        
                         session.commit()
                         fragment_data['drive_url'] = drive_url
-                        logger.info(f"Updated fragment {fragment.fragment_number} with drive URL")
+                        fragment_data['view_url'] = view_url
+                        fragment_data['public'] = upload_result.get('public', False)
+                        logger.info(f"Updated fragment {fragment.fragment_number} with direct download URL: {drive_url}")
+                    elif not drive_url:
+                        logger.warning(f"No direct URL available for fragment {fragment_data.get('fragment_number', i+1)}")
+                        # Используем view URL как fallback если нет прямой ссылки
+                        fallback_url = view_url
+                        if fallback_url:
+                            fragment.drive_url = fallback_url
+                            session.commit()
+                            fragment_data['drive_url'] = fallback_url
+                            logger.warning(f"Using view URL as fallback for fragment {fragment.fragment_number}: {fallback_url}")
 
         # Step 7: Log to Google Sheets
         logger.info(f"Step 7/7: Logging results to Google Sheets for task {task_id}")
@@ -699,8 +719,8 @@ def log_to_sheets(
     
     sheets_service = GoogleSheetsService()
     
-    # Get successful upload links
-    drive_links = [r.get('file_url', '') for r in upload_results if r.get('success')]
+    # Get successful upload links (use direct download URLs)
+    drive_links = [r.get('direct_url', r.get('file_url', '')) for r in upload_results if r.get('success')]
     
     # Log to sheets
     result = sheets_service.log_video_processing(
@@ -910,7 +930,18 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
             drive_links = []
             for fragment in fragments:
                 if fragment.drive_url:
+                    # Проверяем, является ли ссылка прямой ссылкой для скачивания
+                    if "drive.google.com/uc?id=" in fragment.drive_url:
+                        link_type = "📥 Прямая ссылка (для ботов)"
+                    else:
+                        link_type = "👁️ Ссылка для просмотра"
+                    
                     drive_links.append(f"Фрагмент {fragment.fragment_number}: {fragment.drive_url}")
+                    
+                    # Добавляем view URL если есть в метаданных
+                    if hasattr(fragment, 'metadata') and fragment.metadata and fragment.metadata.get('view_url'):
+                        if fragment.metadata['view_url'] != fragment.drive_url:
+                            drive_links.append(f"  └ Просмотр: {fragment.metadata['view_url']}")
         
         async def send_notification():
             bot = Bot(token=settings.telegram_bot_token)
@@ -924,10 +955,21 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                     f.write(f"📊 Всего фрагментов: {actual_fragments_count}\n")
                     f.write(f"📅 Дата создания: {task.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
                     
+                    f.write("💡 ИНФОРМАЦИЯ О ССЫЛКАХ:\n")
+                    f.write("• Прямые ссылки (📥) - для автоматического скачивания ботами\n")
+                    f.write("• Ссылки просмотра (👁️) - для открытия в браузере\n\n")
+                    
                     for link in drive_links:
-                        f.write(f"{link}\n")
+                        # Определяем тип ссылки и добавляем эмодзи
+                        if "drive.google.com/uc?id=" in link:
+                            f.write(f"📥 {link}\n")
+                        elif "drive.google.com/file/d/" in link:
+                            f.write(f"👁️ {link}\n")
+                        else:
+                            f.write(f"{link}\n")
                     
                     f.write(f"\n✅ Все файлы готовы к использованию!")
+                    f.write(f"\n🤖 Прямые ссылки совместимы с ботами для автоматического скачивания")
                     links_file_path = f.name
             
             text = f"""
@@ -940,8 +982,9 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
 • {actual_fragments_count} фрагментов в формате 9:16
 • Качественная обработка видео
 • Готово к использованию
+• 🤖 Прямые ссылки для ботов (общедоступные)
 
-{f"📁 Файлы загружены на Google Drive" if drive_links else "📁 Файлы сохранены на сервере"}
+{f"📁 Файлы загружены на Google Drive с публичным доступом" if drive_links else "📁 Файлы сохранены на сервере"}
             """
             
             try:
