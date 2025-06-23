@@ -228,7 +228,7 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
 🎯 Анимированные субтитры по словам
 
 <b>О нумерации частей:</b>
-{'✅ К названиям длинных видео будет добавляться "Часть 1", "Часть 2" и т.д.' if settings.get('add_part_numbers', False) else '❌ Названия частей останутся без нумерации (для видео меньше 15 минут)'}
+{'✅ К названиям длинных видео будет добавляться "Часть 1", "Часть 2" и т.д.' if settings.get('add_part_numbers', False) else '❌ Названия частей останутся без нумерации (для видео меньше 5 минут)'}
 
 Настройте параметры обработки или нажмите "Начать обработку" для запуска с текущими настройками.
     """
@@ -566,18 +566,41 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
     data = await state.get_data()
     
     async with get_db_session() as session:
-        # Check for existing active tasks
+        # Check for existing active tasks (but ignore old ones from previous runs)
         from sqlalchemy import select
+        from datetime import datetime, timedelta
+        
+        # Consider tasks older than 2 hours as "stale" and can be ignored
+        cutoff_time = datetime.utcnow() - timedelta(hours=2)
+        
         existing_task = await session.scalar(
             select(VideoTask).where(
                 VideoTask.user_id == user_id,
-                VideoTask.status.in_([VideoStatus.PENDING, VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING])
+                VideoTask.status.in_([VideoStatus.PENDING, VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING]),
+                VideoTask.created_at > cutoff_time  # Only check recent tasks
             )
         )
         
         if existing_task:
             await callback.answer("⚠️ У вас уже есть активная задача обработки!", show_alert=True)
             return
+        
+        # Mark old stale tasks as failed to clean up database
+        from sqlalchemy import update
+        stale_tasks_updated = await session.execute(
+            update(VideoTask).where(
+                VideoTask.user_id == user_id,
+                VideoTask.status.in_([VideoStatus.PENDING, VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING]),
+                VideoTask.created_at <= cutoff_time
+            ).values(
+                status=VideoStatus.FAILED,
+                error_message="Задача отменена из-за перезапуска системы"
+            )
+        )
+        
+        if stale_tasks_updated.rowcount > 0:
+            await session.commit()
+            logger.info(f"Cleaned up {stale_tasks_updated.rowcount} stale tasks for user {user_id}")
         
         # Create video task in database
         task_id = str(uuid.uuid4())
@@ -692,20 +715,131 @@ async def show_my_tasks(callback: CallbackQuery) -> None:
     """
     user_id = callback.from_user.id
     
-    # TODO: Get actual tasks from database
-    text = """
+    async with get_db_session() as session:
+        from sqlalchemy import select, func
+        from datetime import datetime, timedelta
+        
+        # Get user's recent tasks
+        recent_tasks = await session.scalars(
+            select(VideoTask).where(
+                VideoTask.user_id == user_id
+            ).order_by(VideoTask.created_at.desc()).limit(10)
+        )
+        
+        tasks_list = list(recent_tasks)
+        
+        if not tasks_list:
+            text = """
 📋 <b>Мои задачи</b>
 
-У вас пока нет активных задач обработки видео.
+У вас пока нет задач обработки видео.
 
 Начните обработку видео, чтобы увидеть задачи здесь.
-    """
+            """
+        else:
+            text = "📋 <b>Мои задачи</b>\n\n"
+            
+            # Group tasks by status
+            active_tasks = [t for t in tasks_list if t.status in [VideoStatus.PENDING, VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING]]
+            completed_tasks = [t for t in tasks_list if t.status == VideoStatus.COMPLETED]
+            failed_tasks = [t for t in tasks_list if t.status == VideoStatus.FAILED]
+            
+            if active_tasks:
+                text += "🔄 <b>Активные задачи:</b>\n"
+                for task in active_tasks[:3]:  # Show max 3 active tasks
+                    elapsed = datetime.utcnow() - task.created_at
+                    elapsed_minutes = int(elapsed.total_seconds() / 60)
+                    
+                    status_emoji = {
+                        VideoStatus.PENDING: "⏳",
+                        VideoStatus.DOWNLOADING: "📥", 
+                        VideoStatus.PROCESSING: "⚙️",
+                        VideoStatus.UPLOADING: "📤"
+                    }.get(task.status, "❓")
+                    
+                    text += f"{status_emoji} ID: <code>{str(task.id)[:8]}</code> ({elapsed_minutes} мин)\n"
+                text += "\n"
+            
+            if completed_tasks:
+                text += "✅ <b>Завершенные задачи:</b>\n"
+                for task in completed_tasks[:3]:  # Show max 3 completed tasks
+                    fragments_count = len(task.fragments) if task.fragments else 0
+                    text += f"✅ ID: <code>{str(task.id)[:8]}</code> ({fragments_count} фрагментов)\n"
+                text += "\n"
+            
+            if failed_tasks:
+                text += "❌ <b>Неудачные задачи:</b>\n"
+                for task in failed_tasks[:2]:  # Show max 2 failed tasks
+                    text += f"❌ ID: <code>{str(task.id)[:8]}</code>\n"
+                text += "\n"
+            
+            text += "<i>Показаны последние 10 задач</i>"
+    
+    # Add cleanup button for admin users
+    from app.bot.keyboards.main_menu import InlineKeyboardBuilder, VideoAction, MenuAction
+    
+    builder = InlineKeyboardBuilder()
+    
+    # Regular back button
+    builder.button(
+        text="⬅️ Назад",
+        callback_data=MenuAction(action="video_menu")
+    )
+    
+    # Cleanup button for emergencies
+    builder.button(
+        text="🧹 Очистить зависшие задачи",
+        callback_data=VideoAction(action="cleanup_stale_tasks")
+    )
+    
+    builder.adjust(1, 1)
     
     await callback.message.edit_text(
         text,
-        reply_markup=get_back_keyboard("video_menu"),
+        reply_markup=builder.as_markup(),
         parse_mode="HTML"
     )
+
+
+@router.callback_query(VideoAction.filter(F.action == "cleanup_stale_tasks"))
+async def cleanup_stale_tasks(callback: CallbackQuery) -> None:
+    """
+    Cleanup stale/hanging tasks for current user.
+    
+    Args:
+        callback: Callback query
+    """
+    user_id = callback.from_user.id
+    
+    async with get_db_session() as session:
+        from sqlalchemy import update
+        from datetime import datetime, timedelta
+        
+        # Mark all active tasks older than 30 minutes as failed
+        cutoff_time = datetime.utcnow() - timedelta(minutes=30)
+        
+        result = await session.execute(
+            update(VideoTask).where(
+                VideoTask.user_id == user_id,
+                VideoTask.status.in_([VideoStatus.PENDING, VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING]),
+                VideoTask.created_at <= cutoff_time
+            ).values(
+                status=VideoStatus.FAILED,
+                error_message="Задача очищена пользователем"
+            )
+        )
+        
+        await session.commit()
+        cleaned_count = result.rowcount
+        
+        if cleaned_count > 0:
+            await callback.answer(f"✅ Очищено {cleaned_count} зависших задач", show_alert=True)
+            logger.info(f"User {user_id} cleaned up {cleaned_count} stale tasks")
+        else:
+            await callback.answer("ℹ️ Зависших задач не найдено", show_alert=True)
+        
+        # Return to tasks list
+        await show_my_tasks(callback)
 
 
 @router.callback_query(VideoAction.filter(F.action == "batch_processing"))

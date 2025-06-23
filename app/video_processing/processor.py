@@ -1518,13 +1518,13 @@ class VideoProcessor:
                 f.write(f"{sub['text'].strip()}\n\n")
         logger.info(f"Generated SRT file at: {srt_path}")
     
-    def split_video(self, input_path: str, chunk_duration: int = 600) -> List[str]:
+    def split_video(self, input_path: str, chunk_duration: int = 300) -> List[str]:
         """
         Делит видео на части по chunk_duration секунд для избежания таймаутов.
         
         Args:
             input_path: Путь к исходному видео
-            chunk_duration: Длительность каждой части в секундах (по умолчанию 10 минут)
+            chunk_duration: Длительность каждой части в секундах (по умолчанию 5 минут)
             
         Returns:
             Список путей к частям видео
