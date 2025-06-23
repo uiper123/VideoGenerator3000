@@ -567,13 +567,13 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
     
     async with get_db_session() as session:
         # Check for existing active tasks (but ignore old ones from previous runs)
-        from sqlalchemy import select
+        from sqlalchemy import select, update
         from datetime import datetime, timedelta
         
         # Consider tasks older than 2 hours as "stale" and can be ignored
         cutoff_time = datetime.utcnow() - timedelta(hours=2)
         
-        existing_task = await session.scalar(
+        result = await session.execute(
             select(VideoTask).where(
                 VideoTask.user_id == user_id,
                 VideoTask.status.in_([VideoStatus.PENDING, VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING]),
@@ -581,13 +581,14 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
             )
         )
         
+        existing_task = result.scalars().first()
+        
         if existing_task:
             await callback.answer("⚠️ У вас уже есть активная задача обработки!", show_alert=True)
             return
         
         # Mark old stale tasks as failed to clean up database
-        from sqlalchemy import update
-        stale_tasks_updated = await session.execute(
+        stale_tasks_result = await session.execute(
             update(VideoTask).where(
                 VideoTask.user_id == user_id,
                 VideoTask.status.in_([VideoStatus.PENDING, VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING]),
@@ -598,9 +599,9 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
             )
         )
         
-        if stale_tasks_updated.rowcount > 0:
+        if stale_tasks_result.rowcount > 0:
             await session.commit()
-            logger.info(f"Cleaned up {stale_tasks_updated.rowcount} stale tasks for user {user_id}")
+            logger.info(f"Cleaned up {stale_tasks_result.rowcount} stale tasks for user {user_id}")
         
         # Create video task in database
         task_id = str(uuid.uuid4())
@@ -716,17 +717,17 @@ async def show_my_tasks(callback: CallbackQuery) -> None:
     user_id = callback.from_user.id
     
     async with get_db_session() as session:
-        from sqlalchemy import select, func
+        from sqlalchemy import select
         from datetime import datetime, timedelta
         
         # Get user's recent tasks
-        recent_tasks = await session.scalars(
+        result = await session.execute(
             select(VideoTask).where(
                 VideoTask.user_id == user_id
             ).order_by(VideoTask.created_at.desc()).limit(10)
         )
         
-        tasks_list = list(recent_tasks)
+        tasks_list = result.scalars().all()
         
         if not tasks_list:
             text = """
@@ -763,7 +764,12 @@ async def show_my_tasks(callback: CallbackQuery) -> None:
             if completed_tasks:
                 text += "✅ <b>Завершенные задачи:</b>\n"
                 for task in completed_tasks[:3]:  # Show max 3 completed tasks
-                    fragments_count = len(task.fragments) if task.fragments else 0
+                    # Get fragments count for completed tasks
+                    fragments_result = await session.execute(
+                        select(VideoFragment).where(VideoFragment.task_id == task.id)
+                    )
+                    fragments = fragments_result.scalars().all()
+                    fragments_count = len(fragments)
                     text += f"✅ ID: <code>{str(task.id)[:8]}</code> ({fragments_count} фрагментов)\n"
                 text += "\n"
             
@@ -829,6 +835,7 @@ async def cleanup_stale_tasks(callback: CallbackQuery) -> None:
             )
         )
         
+        # Manual commit since we're using update
         await session.commit()
         cleaned_count = result.rowcount
         
@@ -929,9 +936,11 @@ async def refresh_task_status(callback: CallbackQuery, callback_data: VideoTaskA
         
         # Get fragments count
         from sqlalchemy import select, func
-        fragments_count = await session.scalar(
+        
+        fragments_result = await session.execute(
             select(func.count(VideoFragment.id)).where(VideoFragment.task_id == task_id)
         )
+        fragments_count = fragments_result.scalar()
         
         # Determine status text and emoji
         status_map = {
