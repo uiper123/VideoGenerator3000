@@ -212,6 +212,10 @@ class AppSettings(BaseSettings):
     video_output_quality: str = Field(default="1080p", env="VIDEO_OUTPUT_QUALITY")
     video_max_concurrent_tasks: int = Field(default=3, env="VIDEO_MAX_CONCURRENT_TASKS")
     
+    # Google API settings
+    google_credentials_path: str = "google-credentials.json"
+    google_spreadsheet_id: Optional[str] = None
+
     def get_admin_ids_list(self) -> List[int]:
         """Parse admin IDs string into list of integers."""
         if not self.telegram_admin_ids:
