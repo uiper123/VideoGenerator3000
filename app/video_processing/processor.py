@@ -21,7 +21,6 @@ from app.config.constants import (
     get_subtitle_font_dir
 )
 from app.config.settings import settings
-from app.video_processing.speech_recognition import SpeechRecognizer
 
 # Настройки стилей для текста
 DEFAULT_TEXT_STYLES = {
