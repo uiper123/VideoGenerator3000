@@ -3,6 +3,7 @@ Video processing handlers for the Telegram bot.
 """
 import uuid
 import re
+import logging
 from typing import Union
 from urllib.parse import urlparse
 
@@ -24,6 +25,7 @@ from app.config.constants import VideoStatus, SUPPORTED_SOURCES, ERROR_MESSAGES,
 from app.database.connection import get_db_session
 from app.database.models import VideoTask, User, VideoFragment
 
+logger = logging.getLogger(__name__)
 router = Router()
 
 
