@@ -214,7 +214,7 @@ class AppSettings(BaseSettings):
     
     # Google API settings
     google_credentials_path: str = "google-credentials.json"
-    google_spreadsheet_id: Optional[str] = None
+    google_spreadsheet_id: Optional[str] = Field(default=None, env="GOOGLE_SPREADSHEET_ID")
 
     def get_admin_ids_list(self) -> List[int]:
         """Parse admin IDs string into list of integers."""
