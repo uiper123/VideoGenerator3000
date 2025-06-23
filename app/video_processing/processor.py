@@ -1018,6 +1018,12 @@ class VideoProcessor:
                 logger.info(f"Successfully generated {len(subtitles)} subtitle segments from speech recognition")
                 logger.info(f"Detected language: {info.language} (confidence: {info.language_probability:.2f})")
                 
+                # Force cleanup of the model to free up memory
+                del model
+                import gc
+                gc.collect()
+                logger.info("Cleaned up Whisper model from memory.")
+
                 # Clean up temporary audio file
                 if os.path.exists(temp_audio):
                     os.remove(temp_audio)
