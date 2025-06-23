@@ -1321,12 +1321,16 @@ class VideoProcessor:
             # Clean up the processed full video (optional, can keep it)
             # os.remove(processed_video_path)
             
+            # Генерация файла ссылок на скачивание
+            links_file = self.generate_download_links_file(fragments, base_url="https://ваш_домен/downloads")
+            
             return {
                 'success': True,
                 'total_duration': total_duration,
                 'num_fragments': len(fragments),
                 'fragments': fragments,
-                'processed_video_path': processed_video_path
+                'processed_video_path': processed_video_path,
+                'download_links_file': links_file
             }
             
         except subprocess.CalledProcessError as e:
@@ -1497,4 +1501,21 @@ class VideoProcessor:
                 f.write(f"{to_srt_time(sub['start'])} --> {to_srt_time(sub['end'])}\n")
                 f.write(f"{sub['text'].strip()}\n\n")
         logger.info(f"Generated SRT file at: {srt_path}")
+    
+    def generate_download_links_file(self, fragments: list, base_url: str, output_path: str = None) -> str:
+        """
+        Генерирует текстовый файл со ссылками на скачивание фрагментов.
+        fragments: список словарей с ключом 'filename' или 'local_path'
+        base_url: базовый URL для скачивания (например, https://ваш_домен/downloads/)
+        output_path: путь для сохранения текстового файла (по умолчанию в output_dir)
+        """
+        if output_path is None:
+            output_path = os.path.join(self.output_dir, "download_links.txt")
+        with open(output_path, 'w', encoding='utf-8') as f:
+            for fragment in fragments:
+                filename = fragment.get('filename') or os.path.basename(fragment['local_path'])
+                link = f"{base_url.rstrip('/')}/{filename}"
+                f.write(link + '\n')
+        logger.info(f"Сгенерирован файл ссылок для скачивания: {output_path}")
+        return output_path
  
