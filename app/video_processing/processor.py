@@ -1355,19 +1355,25 @@ class VideoProcessor:
         processed_video_path = os.path.join(self.output_dir, f"processed_ffmpeg_{uuid.uuid4().hex[:8]}.mp4")
         
         # --- Subtitle Generation ---
-        srt_path = None
+        subtitle_file_path = None
         if settings.get("enable_subtitles", True):
             try:
                 logger.info("Generating subtitles...")
                 subtitles = self.generate_subtitles_from_audio(video_path)
                 if subtitles:
-                    srt_path = os.path.join(self.output_dir, f"subs_{uuid.uuid4().hex[:8]}.srt")
-                    self._generate_srt_file(subtitles, srt_path)
+                    # Generate an ASS file for animated subtitles
+                    subtitle_file_path = os.path.join(self.output_dir, f"subs_{uuid.uuid4().hex[:8]}.ass")
+                    self._generate_ass_file(
+                        subtitles,
+                        subtitle_file_path,
+                        width=output_width,
+                        height=output_height
+                    )
                 else:
                     logger.warning("No subtitles were generated.")
             except Exception as e:
                 logger.error(f"Subtitle generation failed: {e}. Continuing without subtitles.")
-                srt_path = None
+                subtitle_file_path = None
 
         # --- Font and Style Configuration ---
         font_path = settings.get("font_path")
@@ -1411,7 +1417,7 @@ class VideoProcessor:
         if title:
             title_style = settings.get("title_style", DEFAULT_TEXT_STYLES['title'])
             title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
-            font_size = int(output_height * 0.04)  # Increased from 0.035 to 0.04 (larger title)
+            font_size = int(output_height * 0.045)  # Increased from 0.04 to 0.045 (even larger title)
             y_pos = int(output_height * 0.05)  # Keep position the same
             
             title_filter = (
@@ -1423,15 +1429,12 @@ class VideoProcessor:
             current_stream = "[titled]"
         
         # 4. Subtitle overlay (if SRT file was created) - Fixed font and background
-        if srt_path:
-            sanitized_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
-            sub_font_size = int(output_height * 0.015)   # Made smaller subtitles (reduced from 0.02 to 0.015)
-            sub_style = (
-                f"FontName='{font_name_for_style}',FontSize={sub_font_size},"
-                f"PrimaryColour=&HFFFFFF,BorderStyle=1,BackColour=&H00000000,"  # Transparent background
-                f"OutlineColour=&H000000,Outline=2,Shadow=1,Alignment=2,MarginV=60"  # Better outline and shadow
-            )
-            subtitle_filter = f"subtitles='{sanitized_srt_path}':fontsdir='{sanitized_font_dir}':force_style='{sub_style}'"
+        if subtitle_file_path:
+            sanitized_srt_path = subtitle_file_path.replace('\\', '/').replace(':', '\\:')
+            # The style is now mostly controlled by the ASS file itself,
+            # but force_style can override some aspects if needed.
+            # We will rely on the styles defined in the .ass file.
+            subtitle_filter = f"subtitles='{sanitized_srt_path}':fontsdir='{sanitized_font_dir}'"
             video_filters.append(f"{current_stream}{subtitle_filter}[output]")
             current_stream = "[output]"
 
@@ -1465,8 +1468,8 @@ class VideoProcessor:
             logger.info(f"High-performance processing complete. Output: {processed_video_path}")
             
             # --- Cleanup ---
-            if srt_path and os.path.exists(srt_path):
-                os.remove(srt_path)
+            if subtitle_file_path and os.path.exists(subtitle_file_path):
+                os.remove(subtitle_file_path)
             
             return {
                 'processed_video_path': processed_video_path,
@@ -1480,6 +1483,63 @@ class VideoProcessor:
             logger.error("Unified FFmpeg processing timed out.")
             raise RuntimeError("FFmpeg processing timed out.")
     
+    def _generate_ass_file(self, subtitles: List[Dict[str, Any]], ass_path: str, width: int, height: int):
+        """Generates an ASS subtitle file with pop-up animation."""
+        
+        def to_ass_time(seconds: float) -> str:
+            """Converts seconds to ASS time format (H:MM:SS.ss)."""
+            if seconds < 0: seconds = 0
+            centiseconds = int((seconds % 1) * 100)
+            seconds = int(seconds)
+            minutes, seconds = divmod(seconds, 60)
+            hours, minutes = divmod(minutes, 60)
+            return f"{hours:d}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
+
+        # --- Font and Style ---
+        kaph_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
+        font_name = "Kaph-Regular" if os.path.exists(kaph_path) else "DejaVu Sans"
+        
+        font_size = int(height * 0.01) # Use a very small relative font size for subtitles
+        
+        # Style definition for ASS subtitles
+        style_header = "[V4+ Styles]"
+        style_format = "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"
+        style_default = f"Style: Default,{font_name},{font_size},&HFFFFFF,&HFFFFFF,&H000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,60,1"
+
+        # --- Events ---
+        events_header = "[Events]"
+        events_format = "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
+        
+        with open(ass_path, 'w', encoding='utf-8') as f:
+            # Write script info and styles
+            f.write("[Script Info]\n")
+            f.write(f"PlayResX: {width}\n")
+            f.write(f"PlayResY: {height}\n")
+            f.write("WrapStyle: 0\n\n")
+            f.write(f"{style_header}\n")
+            f.write(f"{style_format}\n")
+            f.write(f"{style_default}\n\n")
+            
+            # Write events (the actual subtitles)
+            f.write(f"{events_header}\n")
+            f.write(f"{events_format}\n")
+            
+            for sub in subtitles:
+                start_time = to_ass_time(sub['start'])
+                end_time = to_ass_time(sub['end'])
+                text = sub['text'].strip()
+
+                # Animation: pop-up effect using \move
+                # Word appears 20px below its final position and moves up in 150ms.
+                pop_y_offset = 20
+                animation_tags = f"\\an2\\pos({width/2}, {height - 60 + pop_y_offset})\\move({width/2}, {height - 60 + pop_y_offset}, {width/2}, {height - 60}, 0, 150)"
+                
+                # Dialogue line for the ASS file
+                dialogue_line = f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{{{animation_tags}}}{text}\n"
+                f.write(dialogue_line)
+
+        logger.info(f"Generated animated ASS file at: {ass_path}")
+
     def _generate_srt_file(self, subtitles: List[Dict[str, Any]], srt_path: str):
         """Generates an SRT subtitle file from subtitle data."""
         def to_srt_time(seconds: float) -> str:
