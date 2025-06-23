@@ -72,7 +72,7 @@ class GoogleDriveService:
                 self.service = None
         else:
             logger.warning("Google Drive credentials not found, using mock service")
-            self.service = None
+        self.service = None
     
     def _execute_request(self, request):
         """Execute a Google API request with error handling."""
@@ -173,7 +173,7 @@ class GoogleDriveService:
                 "size": file_size
             }
 
-        file_metadata = {
+            file_metadata = {
             'name': os.path.basename(file_path)
         }
         if folder_id:

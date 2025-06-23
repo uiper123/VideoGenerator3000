@@ -1000,20 +1000,44 @@ class VideoProcessor:
                 )
                 
                 # Convert faster-whisper results to our subtitle format
+                # Extract word-level subtitles instead of segment-level
                 subtitles = []
                 
                 for segment in segments:
-                    # Adjust timestamps by adding start_time offset
-                    segment_start = segment.start + start_time
-                    segment_end = segment.end + start_time
-                    segment_text = segment.text.strip()
-                    
-                    if segment_text:  # Only add non-empty segments
-                        subtitles.append({
-                            'start': segment_start,
-                            'end': segment_end,
-                            'text': segment_text
-                        })
+                    # Check if segment has word timestamps
+                    if hasattr(segment, 'words') and segment.words:
+                        # Process word by word for better timing
+                        for word in segment.words:
+                            if word.word.strip():  # Only add non-empty words
+                                word_start = word.start + start_time
+                                word_end = word.end + start_time
+                                word_text = word.word.strip()
+                                
+                                subtitles.append({
+                                    'start': word_start,
+                                    'end': word_end,
+                                    'text': word_text
+                                })
+                    else:
+                        # Fallback: split segment text into words and estimate timing
+                        segment_start = segment.start + start_time
+                        segment_end = segment.end + start_time
+                        segment_text = segment.text.strip()
+                        
+                        if segment_text:
+                            words = segment_text.split()
+                            if words:
+                                word_duration = (segment_end - segment_start) / len(words)
+                                
+                                for i, word in enumerate(words):
+                                    word_start = segment_start + (i * word_duration)
+                                    word_end = word_start + word_duration
+                                    
+                                    subtitles.append({
+                                        'start': word_start,
+                                        'end': word_end,
+                                        'text': word.strip()
+                                    })
                 
                 logger.info(f"Successfully generated {len(subtitles)} subtitle segments from speech recognition")
                 logger.info(f"Detected language: {info.language} (confidence: {info.language_probability:.2f})")
@@ -1051,44 +1075,56 @@ class VideoProcessor:
     def _generate_simple_subtitles(self, start_time: float, total_duration: float) -> List[Dict[str, Any]]:
         """
         Generate simple subtitles without audio analysis.
+        Creates word-by-word subtitles like the audio analysis version.
         
         Args:
             start_time: Start time in seconds
             total_duration: Total duration in seconds
             
         Returns:
-            List of subtitle segments
+            List of subtitle segments (word by word)
         """
         try:
-            # Create simple subtitle segments
+            # Create word-by-word subtitle segments
             subtitles = []
-            segment_duration = min(3.0, total_duration / 10)  # Each subtitle segment ~3 seconds
-            num_segments = int(total_duration / segment_duration)
             
             demo_texts = [
-                "Добро пожаловать",
-                "Смотрите это видео", 
-                "Интересный контент",
-                "Не забудьте подписаться",
-                "Ставьте лайки",
-                "Делитесь с друзьями",
-                "Спасибо за просмотр",
-                "До встречи",
-                "Увидимся позже",
-                "Отличное видео"
+                "Добро пожаловать на канал",
+                "Смотрите это интересное видео", 
+                "Здесь много полезного контента",
+                "Не забудьте подписаться на канал",
+                "Ставьте лайки под видео",
+                "Делитесь с друзьями и знакомыми",
+                "Спасибо вам за просмотр",
+                "До встречи в следующих видео",
+                "Увидимся совсем скоро друзья",
+                "Отличное видео получилось сегодня"
             ]
             
-            for i in range(min(num_segments, len(demo_texts))):
-                subtitle_start = start_time + (i * segment_duration)
-                subtitle_end = start_time + ((i + 1) * segment_duration)
-                
-                subtitles.append({
-                    'start': subtitle_start,
-                    'end': min(subtitle_end, start_time + total_duration),
-                    'text': demo_texts[i % len(demo_texts)]
-                })
+            # Split all demo texts into individual words
+            all_words = []
+            for text in demo_texts:
+                all_words.extend(text.split())
             
-            logger.info(f"Generated {len(subtitles)} simple subtitle segments")
+            # Calculate timing for each word
+            if all_words:
+                word_duration = total_duration / len(all_words)
+                
+                for i, word in enumerate(all_words):
+                    word_start = start_time + (i * word_duration)
+                    word_end = word_start + word_duration
+                    
+                    # Stop if we exceed the total duration
+                    if word_start >= start_time + total_duration:
+                        break
+                    
+                    subtitles.append({
+                        'start': word_start,
+                        'end': min(word_end, start_time + total_duration),
+                        'text': word.strip()
+                    })
+            
+            logger.info(f"Generated {len(subtitles)} word-by-word simple subtitle segments")
             return subtitles
             
         except Exception as e:
@@ -1357,21 +1393,21 @@ class VideoProcessor:
         video_filters.append("[0:v]split=2[bg][main]")
         video_filters.append(f"[bg]scale={output_width}:{output_height}:force_original_aspect_ratio=increase,crop={output_width}:{output_height},gblur=sigma=20[bg_blurred]")
         
-        # 2. Main video (scaled and centered)
-        main_height = int(output_height * 0.7)
-        main_area_top = int(output_height * 0.15)
-        video_filters.append(f"[main]scale={output_width}:-2[main_scaled]")
+        # 2. Main video (scaled and centered) - Fixed positioning
+        main_height = int(output_height * 0.65)  # Reduced from 0.7 to 0.65 for better centering
+        main_area_top = int(output_height * 0.175)  # Adjusted from 0.15 to 0.175 for better centering
+        video_filters.append(f"[main]scale='min({output_width},iw*{main_height}/ih)':'min({main_height},ih)'[main_scaled]")
         video_filters.append(f"[bg_blurred][main_scaled]overlay=(W-w)/2:{main_area_top}[layout]")
 
         current_stream = "[layout]"
 
-        # 3. Title overlay
+        # 3. Title overlay - Reduced font size
         title = settings.get("title", "")
         if title:
             title_style = settings.get("title_style", DEFAULT_TEXT_STYLES['title'])
             title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
-            font_size = int(output_height * title_style['size_ratio'])
-            y_pos = int(output_height * title_style['position_y_ratio'])
+            font_size = int(output_height * 0.03)  # Reduced from 0.04 to 0.03 (25% smaller)
+            y_pos = int(output_height * 0.05)  # Keep position the same
             
             title_filter = (
                 f"drawtext=text='{title_escaped}':fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':"
@@ -1381,14 +1417,14 @@ class VideoProcessor:
             video_filters.append(f"{current_stream}{title_filter}[titled]")
             current_stream = "[titled]"
         
-        # 4. Subtitle overlay (if SRT file was created)
+        # 4. Subtitle overlay (if SRT file was created) - Fixed font and background
         if srt_path:
             sanitized_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
-            sub_font_size = int(output_height * 0.035)
+            sub_font_size = int(output_height * 0.025)  # Slightly smaller subtitles
             sub_style = (
                 f"FontName='{font_name_for_style}',FontSize={sub_font_size},"
-                f"PrimaryColour=&HFFFFFF,BorderStyle=3,BackColour=&H90000000,"
-                f"OutlineColour=&H90000000,Alignment=2,MarginV=40"
+                f"PrimaryColour=&HFFFFFF,BorderStyle=1,BackColour=&H00000000,"  # Transparent background
+                f"OutlineColour=&H000000,Outline=2,Shadow=1,Alignment=2,MarginV=60"  # Better outline and shadow
             )
             subtitle_filter = f"subtitles='{sanitized_srt_path}':fontsdir='{sanitized_font_dir}':force_style='{sub_style}'"
             video_filters.append(f"{current_stream}{subtitle_filter}[output]")
