@@ -543,6 +543,9 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
         soft_limit = get_time_limit_for_video(duration_sec)
         hard_limit = soft_limit + 300  # +5 минут запас
 
+        # Передаём ffmpeg_timeout в settings (на 1 минуту меньше лимита задачи)
+        settings['ffmpeg_timeout'] = max(soft_limit - 60, 300)
+
         process_video_chain_optimized.apply_async(
             args=[task_id, source_url, settings],
             soft_time_limit=soft_limit,

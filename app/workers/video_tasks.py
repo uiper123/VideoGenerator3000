@@ -299,7 +299,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
     
     try:
         # Step 1: Download video
-        logger.info(f"Step 1/6: Downloading video for task {task_id}")
+        logger.info(f"Step 1/7: Downloading video for task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
@@ -310,8 +310,22 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         quality = settings_dict.get("quality", "1080p")
         download_result = download_video(task_id, url, quality)
         
-        # Step 2: Full video processing using high-performance FFmpeg method
-        logger.info(f"Step 2/6: Processing full video with FFmpeg for task {task_id}")
+        # Step 2: Split video into chunks if it's long (to avoid timeouts)
+        logger.info(f"Step 2/7: Checking if video needs to be split for task {task_id}")
+        
+        # Initialize the processor
+        output_dir = f"/tmp/processed/{task_id}"
+        os.makedirs(output_dir, exist_ok=True)
+        processor = VideoProcessor(output_dir)
+        
+        # Split video into chunks if longer than 15 minutes (900 seconds)
+        chunk_duration = 900  # 15 minutes per chunk
+        video_chunks = processor.split_video(download_result["local_path"], chunk_duration)
+        
+        logger.info(f"Video split into {len(video_chunks)} chunks for processing")
+        
+        # Step 3: Process each chunk separately
+        logger.info(f"Step 3/7: Processing video chunks for task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
@@ -326,27 +340,86 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         processing_settings = settings_dict.copy()
         processing_settings.update(user_settings)
 
-        # Initialize the FFmpeg processor
-        output_dir = f"/tmp/processed/{task_id}"
-        os.makedirs(output_dir, exist_ok=True)
-        processor = VideoProcessor(output_dir)
+        # Process each chunk using the new FFmpeg-native method
+        processed_chunks = []
+        total_chunks = len(video_chunks)
         
-        # Process the video using the new FFmpeg-native method
-        processing_result = processor.process_video_ffmpeg(
-            video_path=download_result["local_path"],
-            settings=processing_settings
-        )
-
-        # Step 3: Cut the processed video into fragments
-        logger.info(f"Step 3/6: Fragmenting video for task {task_id}")
-        processed_video_path = processing_result['processed_video_path']
-        fragments = processor.create_fragments(
-            video_path=processed_video_path,
-            fragment_duration=settings_dict.get("duration", 30),
-            title=settings_dict.get("title", "")
-        )
+        for i, chunk_path in enumerate(video_chunks):
+            try:
+                logger.info(f"Processing chunk {i+1}/{total_chunks}: {os.path.basename(chunk_path)}")
+                
+                # Create chunk-specific output directory
+                chunk_output_dir = os.path.join(output_dir, f"chunk_{i+1}")
+                os.makedirs(chunk_output_dir, exist_ok=True)
+                chunk_processor = VideoProcessor(chunk_output_dir)
+                
+                # Process chunk with title including part number
+                chunk_title = settings_dict.get("title", "")
+                if len(video_chunks) > 1 and chunk_title:
+                    chunk_title = f"{chunk_title} - Часть {i+1}"
+                
+                chunk_settings = processing_settings.copy()
+                chunk_settings['title'] = chunk_title
+                
+                # Use shorter timeout for chunks
+                chunk_settings['ffmpeg_timeout'] = min(processing_settings.get('ffmpeg_timeout', 1800), 1800)
+                
+                chunk_result = chunk_processor.process_video_ffmpeg(
+                    video_path=chunk_path,
+                    settings=chunk_settings
+                )
+                
+                processed_chunks.append({
+                    'chunk_number': i + 1,
+                    'chunk_path': chunk_path,
+                    'processed_path': chunk_result['processed_video_path'],
+                    'processor': chunk_processor
+                })
+                
+                # Update progress
+                chunk_progress = 30 + int((i + 1) / total_chunks * 30)  # 30-60%
+                with get_sync_db_session() as session:
+                    task = session.get(VideoTaskModel, task_id)
+                    if task:
+                        task.progress = chunk_progress
+                        session.commit()
+                        
+                logger.info(f"Chunk {i+1}/{total_chunks} processed successfully")
+                
+            except Exception as e:
+                logger.error(f"Failed to process chunk {i+1}: {e}")
+                # Continue with other chunks
+                continue
         
-        # Save fragments to database
+        logger.info(f"Processed {len(processed_chunks)}/{total_chunks} chunks successfully")
+        
+        # Step 4: Create fragments from all processed chunks
+        logger.info(f"Step 4/7: Creating fragments from processed chunks for task {task_id}")
+        
+        all_fragments = []
+        fragment_counter = 1
+        
+        for chunk_info in processed_chunks:
+            chunk_processor = chunk_info['processor']
+            processed_path = chunk_info['processed_path']
+            
+            # Create fragments from this chunk
+            chunk_fragments = chunk_processor.create_fragments(
+                video_path=processed_path,
+                fragment_duration=settings_dict.get("duration", 30),
+                title=f"{settings_dict.get('title', '')} - Часть {chunk_info['chunk_number']}" if len(processed_chunks) > 1 else settings_dict.get('title', '')
+            )
+            
+            # Renumber fragments globally and update paths
+            for fragment_data in chunk_fragments:
+                fragment_data['fragment_number'] = fragment_counter
+                fragment_data['chunk_number'] = chunk_info['chunk_number']
+                all_fragments.append(fragment_data)
+                fragment_counter += 1
+        
+        fragments = all_fragments
+        
+        # Step 5: Save fragments to database
         for fragment_data in fragments:
             with get_sync_db_session() as session:
                 fragment_model = VideoFragment(
@@ -365,13 +438,13 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 session.commit()
                 fragment_data['id'] = fragment_model.id
 
-        # Step 4: Upload to Google Drive
-        logger.info(f"Step 4/6: Uploading to Google Drive for task {task_id}")
+        # Step 6: Upload to Google Drive
+        logger.info(f"Step 6/7: Uploading to Google Drive for task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
                 task.status = VideoStatus.UPLOADING
-                task.progress = 60
+                task.progress = 70
                 session.commit()
         
         from app.services.google_drive import GoogleDriveService
@@ -383,8 +456,8 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         successful_uploads = [r for r in upload_results if r.get("success")]
         logger.info(f"Successfully uploaded {len(successful_uploads)}/{len(fragments)} files to Google Drive.")
 
-        # Step 5: Log to Google Sheets
-        logger.info(f"Step 5/6: Logging results to Google Sheets for task {task_id}")
+        # Step 7: Log to Google Sheets
+        logger.info(f"Step 7/7: Logging results to Google Sheets for task {task_id}")
         log_to_sheets(
             task_id=task_id,
             download_result=download_result,
@@ -393,8 +466,8 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
             settings_dict=settings_dict
         )
         
-        # Step 6: Finalize and Cleanup
-        logger.info(f"Step 6/6: Finalizing and cleaning up task {task_id}")
+        # Step 8: Finalize and Cleanup
+        logger.info(f"Finalizing and cleaning up task {task_id}")
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
@@ -405,8 +478,18 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 # Send completion notification
                 send_completion_notification.apply_async(args=[task.user_id, task_id, len(fragments)])
         
-        # Cleanup temporary files
-        cleanup_temp_files([download_result["local_path"], processing_result['processed_video_path']] + [f["local_path"] for f in fragments])
+        # Collect all paths for cleanup
+        cleanup_paths = [download_result["local_path"]]
+        
+        # Add chunk paths
+        for chunk_info in processed_chunks:
+            cleanup_paths.append(chunk_info['chunk_path'])
+            cleanup_paths.append(chunk_info['processed_path'])
+        
+        # Add fragment paths
+        cleanup_paths.extend([f["local_path"] for f in fragments])
+        
+        cleanup_temp_files(cleanup_paths)
         
         result = {
             "task_id": task_id,

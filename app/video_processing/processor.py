@@ -1463,9 +1463,12 @@ class VideoProcessor:
             processed_video_path
         ]
 
+        # Получаем лимит времени для ffmpeg
+        ffmpeg_timeout = settings.get('ffmpeg_timeout', 3600)
+
         try:
             logger.info("Executing unified FFmpeg command...")
-            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=3600) # 1 hour timeout
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=ffmpeg_timeout)
             logger.info(f"High-performance processing complete. Output: {processed_video_path}")
             
             # --- Cleanup ---
@@ -1501,6 +1504,70 @@ class VideoProcessor:
                 f.write(f"{to_srt_time(sub['start'])} --> {to_srt_time(sub['end'])}\n")
                 f.write(f"{sub['text'].strip()}\n\n")
         logger.info(f"Generated SRT file at: {srt_path}")
+    
+    def split_video(self, input_path: str, chunk_duration: int = 600) -> List[str]:
+        """
+        Делит видео на части по chunk_duration секунд для избежания таймаутов.
+        
+        Args:
+            input_path: Путь к исходному видео
+            chunk_duration: Длительность каждой части в секундах (по умолчанию 10 минут)
+            
+        Returns:
+            Список путей к частям видео
+        """
+        import math
+        
+        try:
+            # Получаем информацию о видео
+            info = self.get_video_info(input_path)
+            total_duration = int(info['duration'])
+            
+            # Если видео короткое - не делим на части
+            if total_duration <= chunk_duration:
+                return [input_path]
+            
+            # Вычисляем количество частей
+            num_chunks = math.ceil(total_duration / chunk_duration)
+            chunk_paths = []
+            
+            logger.info(f"Splitting video into {num_chunks} chunks of {chunk_duration}s each")
+            
+            for i in range(num_chunks):
+                start_time = i * chunk_duration
+                actual_duration = min(chunk_duration, total_duration - start_time)
+                
+                # Создаем имя файла для части
+                chunk_filename = f"chunk_{i+1:03d}.mp4"
+                chunk_path = os.path.join(self.output_dir, chunk_filename)
+                
+                # Нарезаем часть без перекодирования (быстро)
+                cmd = [
+                    'ffmpeg',
+                    '-ss', str(start_time),
+                    '-i', input_path,
+                    '-t', str(actual_duration),
+                    '-c', 'copy',  # Копирование без перекодирования
+                    '-avoid_negative_ts', 'make_zero',
+                    '-y',
+                    chunk_path
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300)
+                
+                if os.path.exists(chunk_path):
+                    chunk_paths.append(chunk_path)
+                    logger.info(f"Created chunk {i+1}/{num_chunks}: {chunk_filename}")
+                else:
+                    logger.warning(f"Failed to create chunk {i+1}")
+            
+            logger.info(f"Video split completed: {len(chunk_paths)} chunks created")
+            return chunk_paths
+            
+        except Exception as e:
+            logger.error(f"Failed to split video: {e}")
+            # В случае ошибки возвращаем исходный файл
+            return [input_path]
     
     def generate_download_links_file(self, fragments: list, base_url: str, output_path: str = None) -> str:
         """
