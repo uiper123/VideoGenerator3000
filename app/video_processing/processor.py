@@ -1397,9 +1397,10 @@ class VideoProcessor:
         main_height = int(output_height * 0.65)  # Height of the main video area
         main_area_top = int(output_height * 0.175)  # Top position of main video area
         
-        # Scale maintaining aspect ratio, crop if needed to fit area
-        # This will preserve correct proportions and crop sides if necessary
-        video_filters.append(f"[main]scale='if(gte(a,{output_width}/{main_height}),{output_width},-1)':'if(gte(a,{output_width}/{main_height}),-1,{main_height})'[main_scaled]")
+        # Scale maintaining aspect ratio and crop to fit exactly
+        # First scale to fill the area (maintaining aspect ratio)
+        video_filters.append(f"[main]scale={output_width}:{main_height}:force_original_aspect_ratio=increase[main_scaled]")
+        # Then crop to exact size
         video_filters.append(f"[main_scaled]crop={output_width}:{main_height}[main_cropped]")
         video_filters.append(f"[bg_blurred][main_cropped]overlay=(W-w)/2:{main_area_top}[layout]")
 
