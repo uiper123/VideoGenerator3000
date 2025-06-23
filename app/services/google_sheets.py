@@ -8,75 +8,99 @@ import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-from google.oauth2.service_account import Credentials
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from app.config.settings import settings
+
 logger = logging.getLogger(__name__)
 
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.file']
+
+def get_google_credentials() -> Optional[service_account.Credentials]:
+    """
+    Get Google credentials from Base64 env var or from a file.
+    
+    Tries to load credentials from the GOOGLE_CREDENTIALS_BASE64 
+    environment variable first. If not found, falls back to the
+    google-credentials.json file.
+    
+    Returns:
+        google.oauth2.service_account.Credentials if found, else None.
+    """
+    creds_json_str = os.getenv("GOOGLE_CREDENTIALS_BASE64")
+    
+    if creds_json_str:
+        try:
+            logger.info("Loading Google credentials from Base64 environment variable.")
+            creds_json = base64.b64decode(creds_json_str).decode('utf-8')
+            creds_info = json.loads(creds_json)
+            credentials = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+            return credentials
+        except Exception as e:
+            logger.error(f"Failed to load credentials from Base64 string: {e}")
+            return None
+    
+    # Fallback to file
+    creds_path = settings.google_credentials_path
+    if os.path.exists(creds_path):
+        try:
+            logger.info(f"Loading Google credentials from file: {creds_path}")
+            credentials = service_account.Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+            return credentials
+        except Exception as e:
+            logger.error(f"Failed to load credentials from file {creds_path}: {e}")
+            return None
+            
+    return None
 
 class GoogleSheetsService:
     """Service for logging data to Google Sheets."""
     
-    def __init__(self, credentials_path: Optional[str] = None, spreadsheet_id: Optional[str] = None):
-        """
-        Initialize Google Sheets service.
+    def __init__(self):
+        """Initialize Google Sheets service."""
+        self.credentials = get_google_credentials()
+        self.spreadsheet_id = settings.google_spreadsheet_id
         
-        Args:
-            credentials_path: Path to Google credentials JSON file
-            spreadsheet_id: ID of the Google Spreadsheet
-        """
-        self.credentials_path = credentials_path or "google-credentials.json"
-        self.spreadsheet_id = spreadsheet_id or os.getenv('GOOGLE_SHEETS_ID')
-        self.service = None
-        self._initialize_service()
+        if self.credentials:
+            try:
+                self.service = build('sheets', 'v4', credentials=self.credentials)
+                logger.info("Google Sheets service initialized successfully.")
+            except HttpError as e:
+                logger.error(f"Failed to build Google Sheets service: {e}")
+                self.service = None
+        else:
+            logger.warning("Google Sheets credentials not found, using mock service")
+            self.service = None
     
-    def _initialize_service(self):
-        """Initialize Google Sheets API service."""
+    def _execute_request(self, request):
+        """Execute a Google API request with error handling."""
+        if not self.service:
+            logger.warning("Attempted to execute request with mock service.")
+            return None
         try:
-            # Try to get credentials from environment variable (base64 encoded)
-            credentials_base64 = os.getenv('GOOGLE_CREDENTIALS_BASE64')
-            
-            if credentials_base64:
-                # Decode base64 credentials (add padding if needed)
-                missing_padding = len(credentials_base64) % 4
-                if missing_padding:
-                    credentials_base64 += '=' * (4 - missing_padding)
-                
-                credentials_json = base64.b64decode(credentials_base64).decode('utf-8')
-                credentials_dict = json.loads(credentials_json)
-                
-                # Create credentials from dict
-                credentials = Credentials.from_service_account_info(
-                    credentials_dict,
-                    scopes=['https://www.googleapis.com/auth/spreadsheets']
-                )
-                
-                logger.info("Google Sheets credentials loaded from environment variable")
-                
-            elif os.path.exists(self.credentials_path):
-                # Load from file
-                credentials = Credentials.from_service_account_file(
-                    self.credentials_path,
-                    scopes=['https://www.googleapis.com/auth/spreadsheets']
-                )
-                
-                logger.info(f"Google Sheets credentials loaded from file: {self.credentials_path}")
-                
-            else:
-                logger.warning("Google Sheets credentials not found, using mock service")
-                self.service = "mock_service"
-                return
-            
-            # Build the Sheets service
-            self.service = build('sheets', 'v4', credentials=credentials)
-            logger.info("Google Sheets service initialized successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize Google Sheets service: {e}")
-            logger.info("Falling back to mock service")
-            self.service = "mock_service"
-    
+            return request.execute()
+        except HttpError as error:
+            logger.error(f'An error occurred: {error}')
+            return None
+
+    def append_row(self, sheet_name: str, values: List[Any]) -> Dict[str, Any]:
+        """Append a row to a sheet."""
+        if not self.service:
+            logger.info(f"Mock append to {sheet_name}: {values}")
+            return {"updates": {"updatedRange": f"{sheet_name}!A1:Z1"}}
+
+        body = {'values': [values]}
+        request = self.service.spreadsheets().values().append(
+            spreadsheetId=self.spreadsheet_id,
+            range=f"{sheet_name}!A1",
+            valueInputOption='USER_ENTERED',
+            insertDataOption='INSERT_ROWS',
+            body=body
+        )
+        return self._execute_request(request)
+
     def log_video_processing(
         self,
         task_id: str,

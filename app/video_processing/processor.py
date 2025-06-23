@@ -208,12 +208,11 @@ class VideoProcessor:
         total_duration = video_info['duration']
         
         if total_duration < fragment_duration:
-            # If video is shorter than fragment duration, create one fragment
             num_fragments = 1
-            fragment_duration = int(total_duration)
         else:
             num_fragments = int(total_duration // fragment_duration)
-            if total_duration % fragment_duration > 10:  # If remainder > 10 seconds, create extra fragment
+            # Create an extra fragment if the remainder is significant
+            if total_duration % fragment_duration > 5:
                 num_fragments += 1
         
         fragments = []
@@ -221,49 +220,57 @@ class VideoProcessor:
         for i in range(num_fragments):
             start_time = i * fragment_duration
             
-            # Calculate end time for this fragment
-            if i == num_fragments - 1:
-                # Last fragment - use remaining duration
-                end_time = total_duration
-                actual_duration = total_duration - start_time
-            else:
-                end_time = start_time + fragment_duration
-                actual_duration = fragment_duration
+            # Ensure the duration does not exceed the video length
+            actual_duration = min(fragment_duration, total_duration - start_time)
             
             # Skip fragments that are too short
-            if actual_duration < 5:  # Skip fragments shorter than 5 seconds
+            if actual_duration < 5:
                 continue
-            
-            fragment_filename = f"fragment_{i+1:03d}.mp4"
+
+            fragment_filename = f"fragment_{i+1:03d}_{uuid.uuid4().hex[:4]}.mp4"
             fragment_path = os.path.join(self.output_dir, fragment_filename)
             
-            # Create fragment title
-            fragment_title = f"{title} - Часть {i+1}" if title else f"Фрагмент {i+1}"
+            # Use stream copy for ultra-fast cutting without re-encoding
+            cmd = [
+                'ffmpeg',
+                '-ss', str(start_time),
+                '-i', video_path,
+                '-t', str(actual_duration),
+                '-c', 'copy', # This is the key for performance
+                '-avoid_negative_ts', 'make_zero',
+                '-y',
+                fragment_path
+            ]
             
-            # Process fragment with professional layout
-            fragment_info = self._process_professional_fragment(
-                video_path=video_path,
-                output_path=fragment_path,
-                start_time=start_time,
-                duration=actual_duration,
-                quality=quality,
-                title=fragment_title,
-                subtitle_style=subtitle_style,
-                has_subtitles=False  # Default to no subtitles in basic create_fragments
-            )
-            
-            fragment_info.update({
-                'fragment_number': i + 1,
-                'filename': fragment_filename,
-                'start_time': start_time,
-                'end_time': end_time,
-                'duration': actual_duration,
-                'title': fragment_title,
-                'subtitle_style': subtitle_style
-            })
-            
-            fragments.append(fragment_info)
-            logger.info(f"Created fragment {i+1}/{num_fragments}: {fragment_filename}")
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=120)
+                
+                if os.path.exists(fragment_path):
+                    file_size = os.path.getsize(fragment_path)
+                    fragment_info = {
+                        'fragment_number': i + 1,
+                        'filename': fragment_filename,
+                        'local_path': fragment_path,
+                        'start_time': start_time,
+                        'end_time': start_time + actual_duration,
+                        'duration': actual_duration,
+                        'size_bytes': file_size,
+                        'resolution': f"{video_info['width']}x{video_info['height']}",
+                        'fps': video_info['fps'],
+                        'has_subtitles': srt_path is not None if 'srt_path' in locals() else False
+                    }
+                    fragments.append(fragment_info)
+                    logger.info(f"Created fragment {i+1}/{num_fragments} (fast cut): {fragment_filename}")
+                else:
+                    logger.warning(f"Fragment {i+1} was not created despite successful FFmpeg command.")
+
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Failed to cut fragment {i+1}. FFmpeg stderr: {e.stderr}")
+                # Optionally, skip this fragment and continue
+                continue
+            except subprocess.TimeoutExpired:
+                logger.error(f"Timeout when cutting fragment {i+1}.")
+                continue
         
         return fragments
     
