@@ -374,7 +374,14 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 task.progress = 60
                 session.commit()
         
-        upload_results = upload_to_drive(task_id, fragments)
+        from app.services.google_drive import GoogleDriveService
+        drive_service = GoogleDriveService()
+        upload_results = drive_service.upload_multiple_files(
+            file_paths=[f["local_path"] for f in fragments],
+            folder_name=f"VideoBot_Task_{task_id}"
+        )
+        successful_uploads = [r for r in upload_results if r.get("success")]
+        logger.info(f"Successfully uploaded {len(successful_uploads)}/{len(fragments)} files to Google Drive.")
 
         # Step 5: Log to Google Sheets
         logger.info(f"Step 5/6: Logging results to Google Sheets for task {task_id}")
@@ -407,7 +414,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
             "fragments_count": len(fragments),
             "total_duration": sum(f["duration"] for f in fragments),
             "total_size_bytes": sum(f["size_bytes"] for f in fragments),
-            "drive_uploads": len([r for r in upload_results if r.get("success")]),
+            "drive_uploads": len(successful_uploads),
             "fragments": fragments
         }
         
