@@ -73,24 +73,24 @@ SUPPORTED_SOURCES = [
 # Font settings for subtitles
 SUBTITLE_FONTS = {
     SubtitleStyle.CLASSIC: {
-        "font": "Troika",
-        "font_path": "/app/fonts/troika.ttf",
+        "font": "Obelix Pro",
+        "font_path": "/app/fonts/Obelix Pro.ttf",
         "size": 48,
         "color": "white",
         "stroke": "black",
         "stroke_width": 2
     },
     SubtitleStyle.MODERN: {
-        "font": "Troika",
-        "font_path": "/app/fonts/troika.ttf",
+        "font": "Obelix Pro",
+        "font_path": "/app/fonts/Obelix Pro.ttf",
         "size": 52,
         "color": "white",
         "background": "rgba(0,0,0,0.7)",
         "padding": 10
     },
     SubtitleStyle.COLORFUL: {
-        "font": "Troika",
-        "font_path": "/app/fonts/troika.ttf",
+        "font": "Obelix Pro",
+        "font_path": "/app/fonts/Obelix Pro.ttf",
         "size": 56,
         "color": "yellow",
         "stroke": "black",
@@ -170,16 +170,16 @@ MENU_EMOJIS = {
 
 def get_subtitle_font_path() -> str:
     """
-    Get the path to the Troika font for subtitles.
+    Get the path to the Obelix Pro font for subtitles.
     
     Returns:
-        Path to Troika font or fallback font if not available
+        Path to Obelix Pro font or fallback font if not available
     """
     import os
-    troika_path = "/app/fonts/troika.ttf"
+    obelix_path = "/app/fonts/Obelix Pro.ttf"
     fallback_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     
-    return troika_path if os.path.exists(troika_path) else fallback_path
+    return obelix_path if os.path.exists(obelix_path) else fallback_path
 
 
 def get_subtitle_font_name() -> str:
@@ -190,9 +190,9 @@ def get_subtitle_font_name() -> str:
         Font name for FFmpeg
     """
     import os
-    troika_path = "/app/fonts/troika.ttf"
+    obelix_path = "/app/fonts/Obelix Pro.ttf"
     
-    return "troika" if os.path.exists(troika_path) else "DejaVuSans-Bold"
+    return "Obelix Pro" if os.path.exists(obelix_path) else "DejaVuSans-Bold"
 
 
 def get_subtitle_font_dir() -> str:
@@ -203,6 +203,6 @@ def get_subtitle_font_dir() -> str:
         Directory path for subtitle fonts
     """
     import os
-    troika_path = "/app/fonts/troika.ttf"
+    obelix_path = "/app/fonts/Obelix Pro.ttf"
     
-    return "/app/fonts" if os.path.exists(troika_path) else "/usr/share/fonts/truetype/dejavu" 
+    return "/app/fonts" if os.path.exists(obelix_path) else "/usr/share/fonts/truetype/dejavu" 

@@ -641,10 +641,10 @@ def get_user_settings(task_id: str) -> Dict[str, Any]:
         title_style = settings.get('title_style', DEFAULT_TEXT_STYLES['title'])
         
         # Get font path from settings if available
-        font_name = title_style.get('font', 'Kaph-Regular')
+        font_name = title_style.get('font', 'Obelix Pro')
         font_path = f"/app/fonts/{font_name.replace(' ', '/')}/static/{font_name}-Regular.ttf"
         if not os.path.exists(font_path):
-             font_path = f"/app/fonts/Kaph/static/Kaph-Regular.ttf" # Default fallback
+             font_path = f"/app/fonts/Obelix Pro.ttf" # Default fallback
         
         logger.info(f"Loaded settings for user {task.user_id}: {title_style}")
         return {

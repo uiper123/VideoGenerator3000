@@ -460,14 +460,14 @@ class VideoProcessor:
             # Use custom style or default
             style = title_style or DEFAULT_TEXT_STYLES['title']
             
-            # Use custom font if provided, otherwise use Kaph font
+            # Use custom font if provided, otherwise use Obelix Pro font
             if font_path and os.path.exists(font_path):
                 fontfile = font_path
             else:
-                # Try Kaph font first
-                kaph_font_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
-                if os.path.exists(kaph_font_path):
-                    fontfile = kaph_font_path
+                # Try Obelix Pro font first
+                obelix_font_path = "/app/fonts/Obelix Pro.ttf"
+                if os.path.exists(obelix_font_path):
+                    fontfile = obelix_font_path
                 else:
                     fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             
@@ -508,6 +508,12 @@ class VideoProcessor:
 
         logger.info(f"Scanning fonts directory: {fonts_dir}")
         try:
+            # Add Obelix Pro font specifically
+            obelix_path = os.path.join(fonts_dir, "Obelix Pro.ttf")
+            if os.path.exists(obelix_path):
+                fonts["Obelix Pro"] = obelix_path
+                logger.debug(f"Added font: Obelix Pro -> {obelix_path}")
+                
             for font_family in sorted(os.listdir(fonts_dir)):
                 family_path = os.path.join(fonts_dir, font_family)
                 if os.path.isdir(family_path):
@@ -1409,15 +1415,15 @@ class VideoProcessor:
             font_dir_for_ffmpeg = os.path.dirname(os.path.abspath(font_path))
             font_name_for_style = os.path.splitext(os.path.basename(font_path))[0]
         else:
-            kaph_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
-            if os.path.exists(kaph_path):
-                font_dir_for_ffmpeg = "/app/fonts/Kaph/static"
-                font_name_for_style = "Kaph-Regular"
+            obelix_path = "/app/fonts/Obelix Pro.ttf"
+            if os.path.exists(obelix_path):
+                font_dir_for_ffmpeg = "/app/fonts"
+                font_name_for_style = "Obelix Pro"
             else:
                 font_dir_for_ffmpeg = "/usr/share/fonts/truetype/dejavu"
                 font_name_for_style = "DejaVu Sans"
 
-        # Separate font configuration for subtitles (Troika)
+        # Separate font configuration for subtitles (Obelix Pro)
         subtitle_font_path = get_subtitle_font_path()
         subtitle_font_dir = get_subtitle_font_dir()
         subtitle_font_name = get_subtitle_font_name()

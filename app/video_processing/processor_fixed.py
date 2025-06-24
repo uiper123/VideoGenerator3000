@@ -157,10 +157,10 @@ class VideoProcessor:
             if font_path and os.path.exists(font_path):
                 fontfile = font_path
             else:
-                # Try Kaph font first
-                kaph_font_path = "/app/fonts/Kaph/static/Kaph-Regular.ttf"
-                if os.path.exists(kaph_font_path):
-                    fontfile = kaph_font_path
+                # Try Obelix Pro font first
+                obelix_font_path = "/app/fonts/Obelix Pro.ttf"
+                if os.path.exists(obelix_font_path):
+                    fontfile = obelix_font_path
                 else:
                     fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             
@@ -198,10 +198,10 @@ class VideoProcessor:
         # Custom fonts from fonts directory
         fonts_dir = "/app/fonts"
         if os.path.exists(fonts_dir):
-            # Add Troika font specifically
-            troika_path = os.path.join(fonts_dir, "troika.ttf")
-            if os.path.exists(troika_path):
-                fonts["Troika"] = troika_path
+            # Add Obelix Pro font specifically
+            obelix_path = os.path.join(fonts_dir, "Obelix Pro.ttf")
+            if os.path.exists(obelix_path):
+                fonts["Obelix Pro"] = obelix_path
             
             for font_family in os.listdir(fonts_dir):
                 family_path = os.path.join(fonts_dir, font_family)
