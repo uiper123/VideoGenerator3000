@@ -9,6 +9,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 import json
 import uuid
+import signal
 
 from app.config.constants import (
     SHORTS_RESOLUTION, 
@@ -995,81 +996,103 @@ class VideoProcessor:
             try:
                 from faster_whisper import WhisperModel
                 
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Whisper transcription timed out")
+                
+                # Set timeout для предотвращения зависания на длинных аудио
+                timeout_seconds = min(600, duration * 2) if duration else 600  # Максимум 10 минут
+                
                 # Load faster-whisper model (base model for good balance of speed/accuracy)
                 model = WhisperModel("base", device="cpu", compute_type="int8")
                 
-                # Transcribe audio with word-level timestamps
-                segments, info = model.transcribe(
-                    temp_audio,
-                    language="ru",  # Russian language
-                    word_timestamps=True,
-                    task="transcribe"
-                )
+                # Set signal alarm for timeout
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(int(timeout_seconds))
                 
-                # Convert faster-whisper results to our subtitle format
-                # Extract word-level subtitles instead of segment-level
-                subtitles = []
-                
-                for segment in segments:
-                    # Check if segment has word timestamps
-                    if hasattr(segment, 'words') and segment.words:
-                        # Process word by word for better timing
-                        for word in segment.words:
-                            if word.word.strip():  # Only add non-empty words
-                                word_start = word.start + start_time
-                                word_end = word.end + start_time
-                                word_text = word.word.strip()
-                                
-                                subtitles.append({
-                                    'start': word_start,
-                                    'end': word_end,
-                                    'text': word_text
-                                })
-                    else:
-                        # Fallback: split segment text into words and estimate timing
-                        segment_start = segment.start + start_time
-                        segment_end = segment.end + start_time
-                        segment_text = segment.text.strip()
-                        
-                        if segment_text:
-                            words = segment_text.split()
-                            if words:
-                                word_duration = (segment_end - segment_start) / len(words)
-                                
-                                for i, word in enumerate(words):
-                                    word_start = segment_start + (i * word_duration)
-                                    word_end = word_start + word_duration
+                try:
+                    # Transcribe audio with word-level timestamps
+                    segments, info = model.transcribe(
+                        temp_audio,
+                        language="ru",  # Russian language
+                        word_timestamps=True,
+                        task="transcribe"
+                    )
+                    
+                    # Cancel the alarm
+                    signal.alarm(0)
+                    
+                    # Convert faster-whisper results to our subtitle format
+                    # Extract word-level subtitles instead of segment-level
+                    subtitles = []
+                    
+                    for segment in segments:
+                        # Check if segment has word timestamps
+                        if hasattr(segment, 'words') and segment.words:
+                            # Process word by word for better timing
+                            for word in segment.words:
+                                if word.word.strip():  # Only add non-empty words
+                                    word_start = word.start + start_time
+                                    word_end = word.end + start_time
+                                    word_text = word.word.strip()
                                     
                                     subtitles.append({
                                         'start': word_start,
                                         'end': word_end,
-                                        'text': word.strip()
+                                        'text': word_text
                                     })
-                
-                logger.info(f"Successfully generated {len(subtitles)} subtitle segments from speech recognition")
-                logger.info(f"Detected language: {info.language} (confidence: {info.language_probability:.2f})")
-                
-                # Force cleanup of the model to free up memory
-                del model
-                import gc
-                gc.collect()
-                logger.info("Cleaned up Whisper model from memory.")
+                        else:
+                            # Fallback: split segment text into words and estimate timing
+                            segment_start = segment.start + start_time
+                            segment_end = segment.end + start_time
+                            segment_text = segment.text.strip()
+                            
+                            if segment_text:
+                                words = segment_text.split()
+                                if words:
+                                    word_duration = (segment_end - segment_start) / len(words)
+                                    
+                                    for i, word in enumerate(words):
+                                        word_start = segment_start + (i * word_duration)
+                                        word_end = word_start + word_duration
+                                        
+                                        subtitles.append({
+                                            'start': word_start,
+                                            'end': word_end,
+                                            'text': word.strip()
+                                        })
+                    
+                    logger.info(f"Successfully generated {len(subtitles)} subtitle segments from speech recognition")
+                    logger.info(f"Detected language: {info.language} (confidence: {info.language_probability:.2f})")
+                    
+                    # Force cleanup of the model to free up memory
+                    del model
+                    import gc
+                    gc.collect()
+                    logger.info("Cleaned up Whisper model from memory.")
 
-                # Clean up temporary audio file
-                if os.path.exists(temp_audio):
-                    os.remove(temp_audio)
-                
-                return subtitles
-                
+                    # Clean up temporary audio file
+                    if os.path.exists(temp_audio):
+                        os.remove(temp_audio)
+                    
+                    return subtitles
+                    
+                except TimeoutError:
+                    signal.alarm(0)  # Cancel alarm
+                    logger.warning(f"Whisper transcription timed out after {timeout_seconds} seconds, falling back to simple subtitles")
+                    # Force cleanup
+                    try:
+                        del model
+                        import gc
+                        gc.collect()
+                    except:
+                        pass
+                    # Clean up temporary audio file
+                    if os.path.exists(temp_audio):
+                        os.remove(temp_audio)
+                    return self._generate_simple_subtitles(start_time, duration or self.get_video_info(video_path)['duration'])
+                    
             except ImportError:
                 logger.error("faster-whisper not available, falling back to simple subtitles")
-                # Clean up temporary audio file
-                if os.path.exists(temp_audio):
-                    os.remove(temp_audio)
-                return self._generate_simple_subtitles(start_time, duration or self.get_video_info(video_path)['duration'])
-            
-            except Exception as whisper_error:
-                logger.error(f"faster-whisper transcription failed: {whisper_error}")
                 # Clean up temporary audio file
                 if os.path.exists(temp_audio):
                     os.remove(temp_audio)

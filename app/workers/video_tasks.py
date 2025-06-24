@@ -336,7 +336,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         processor = VideoProcessor(output_dir)
         
         # Split video into chunks if longer than 5 minutes (300 seconds)
-        chunk_duration = 600  # 5 minutes per chunk
+        chunk_duration = 300  # 5 minutes per chunk (было 600, но это слишком долго для faster-whisper)
         video_chunks = processor.split_video(download_result["local_path"], chunk_duration)
         
         logger.info(f"Video split into {len(video_chunks)} chunks for processing")
@@ -505,11 +505,17 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                     fragment = session.get(VideoFragment, fragment_data['id'])
                     if fragment and drive_url:
                         fragment.drive_url = drive_url
-                        # Добавляем также view URL в метаданные если нужно
-                        if not hasattr(fragment, 'metadata') or fragment.metadata is None:
+                        # Правильно работаем с JSON полем metadata
+                        if fragment.metadata is None:
                             fragment.metadata = {}
-                        fragment.metadata['view_url'] = view_url
-                        fragment.metadata['public'] = upload_result.get('public', False)
+                        
+                        # Создаем копию metadata для обновления
+                        updated_metadata = dict(fragment.metadata) if fragment.metadata else {}
+                        updated_metadata['view_url'] = view_url
+                        updated_metadata['public'] = upload_result.get('public', False)
+                        
+                        # Присваиваем обновленный словарь
+                        fragment.metadata = updated_metadata
                         
                         session.commit()
                         fragment_data['drive_url'] = drive_url
@@ -767,8 +773,8 @@ def cleanup_stale_tasks() -> Dict[str, Any]:
     try:
         from datetime import datetime, timedelta
         
-        # Consider tasks stuck in processing for more than 2 hours as stale
-        cutoff_time = datetime.utcnow() - timedelta(hours=2)
+        # Consider tasks stuck in processing for more than 1 hour as stale (было 2 часа)
+        cutoff_time = datetime.utcnow() - timedelta(hours=1)
         
         tasks_cleaned = 0
         
@@ -939,9 +945,11 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                     drive_links.append(f"Фрагмент {fragment.fragment_number}: {fragment.drive_url}")
                     
                     # Добавляем view URL если есть в метаданных
-                    if hasattr(fragment, 'metadata') and fragment.metadata and fragment.metadata.get('view_url'):
-                        if fragment.metadata['view_url'] != fragment.drive_url:
-                            drive_links.append(f"  └ Просмотр: {fragment.metadata['view_url']}")
+                    if (hasattr(fragment, 'metadata') and fragment.metadata and 
+                        isinstance(fragment.metadata, dict) and fragment.metadata.get('view_url')):
+                        view_url = fragment.metadata.get('view_url')
+                        if view_url and view_url != fragment.drive_url:
+                            drive_links.append(f"  └ Просмотр: {view_url}")
         
         async def send_notification():
             bot = Bot(token=settings.telegram_bot_token)
