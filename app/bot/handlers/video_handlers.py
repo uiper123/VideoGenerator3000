@@ -572,8 +572,8 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
         from sqlalchemy import select, update
         from datetime import datetime, timedelta
         
-        # Consider tasks older than 2 hours as "stale" and can be ignored
-        cutoff_time = datetime.utcnow() - timedelta(hours=2)
+        # Consider tasks older than 4 hours as "stale" and can be ignored (увеличено для больших видео)
+        cutoff_time = datetime.utcnow() - timedelta(hours=4)
         
         result = await session.execute(
             select(VideoTask).where(
@@ -588,7 +588,7 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
         if existing_task:
             # Check if the task is really active or just stuck
             task_age = datetime.utcnow() - existing_task.created_at
-            if task_age.total_seconds() > 7200:  # 2 hours
+            if task_age.total_seconds() > 14400:  # 4 hours
                 # Task is too old, mark as failed and continue
                 existing_task.status = VideoStatus.FAILED
                 existing_task.error_message = "Задача отменена из-за превышения времени выполнения"
@@ -700,10 +700,10 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
         except Exception as e:
             duration_sec = 0  # fallback
 
-        # Функция для расчёта лимита времени
+        # Функция для расчёта лимита времени (увеличено для больших видео)
         def get_time_limit_for_video(video_duration_sec):
-            base = video_duration_sec * 1.5 * 1.2
-            return int(min(max(base, 600), 10800))  # от 10 минут до 3 часов
+            base = video_duration_sec * 2.0 * 1.5  # Увеличены коэффициенты
+            return int(min(max(base, 1200), 21600))  # от 20 минут до 6 часов
 
         soft_limit = get_time_limit_for_video(duration_sec)
         hard_limit = soft_limit + 300  # +5 минут запас
@@ -841,8 +841,8 @@ async def cleanup_stale_tasks(callback: CallbackQuery) -> None:
         from sqlalchemy import update
         from datetime import datetime, timedelta
         
-        # Mark all active tasks older than 30 minutes as failed
-        cutoff_time = datetime.utcnow() - timedelta(minutes=30)
+        # Mark all active tasks older than 2 hours as failed (увеличено для больших видео)
+        cutoff_time = datetime.utcnow() - timedelta(hours=2)
         
         result = await session.execute(
             update(VideoTask).where(

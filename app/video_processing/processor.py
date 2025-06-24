@@ -764,7 +764,7 @@ class VideoProcessor:
                 capture_output=True, 
                 text=True, 
                 check=True,
-                timeout=600  # 10 minute timeout for complex processing
+                timeout=3600  # Увеличено до 1 часа
             )
             
             # Add subtitles if enabled
@@ -1006,7 +1006,7 @@ class VideoProcessor:
                     raise TimeoutError("Whisper transcription timed out")
                 
                 # Set timeout для предотвращения зависания на длинных аудио
-                timeout_seconds = min(600, duration * 2) if duration else 600  # Максимум 10 минут
+                timeout_seconds = min(1800, duration * 3) if duration else 1800  # Максимум 30 минут, увеличено
                 
                 # Load faster-whisper model (base model for good balance of speed/accuracy)
                 model = WhisperModel("base", device="cpu", compute_type="int8")
@@ -1248,7 +1248,7 @@ class VideoProcessor:
             logger.info(f"FFmpeg command: {' '.join(cmd)}")
             
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=1200)
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=3600)
                 logger.info("FFmpeg completed successfully")
                 if result.stderr:
                     logger.warning(f"FFmpeg stderr: {result.stderr}")
@@ -1506,7 +1506,7 @@ class VideoProcessor:
         ]
 
         # Получаем лимит времени для ffmpeg
-        ffmpeg_timeout = settings.get('ffmpeg_timeout', 3600)
+        ffmpeg_timeout = settings.get('ffmpeg_timeout', 7200)
 
         try:
             logger.info("Executing unified FFmpeg command...")

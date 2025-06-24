@@ -93,8 +93,8 @@ celery_app.conf.update(
     },
     
     # Error handling - More conservative settings
-    task_soft_time_limit=1800,  # 30 minutes
-    task_time_limit=3600,       # 1 hour hard limit
+    task_soft_time_limit=13800,  # 3 hours 50 minutes
+    task_time_limit=14400,       # 4 hours hard limit
     task_max_retries=2,         # Reduced from 3 to 2
     task_default_retry_delay=120,  # Increased from 60 to 120 seconds
     

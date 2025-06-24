@@ -380,8 +380,8 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 chunk_settings = processing_settings.copy()
                 chunk_settings['title'] = chunk_title
                 
-                # Use shorter timeout for chunks
-                chunk_settings['ffmpeg_timeout'] = min(processing_settings.get('ffmpeg_timeout', 1800), 1800)
+                # Use shorter timeout for chunks (увеличено для больших видео)
+                chunk_settings['ffmpeg_timeout'] = min(processing_settings.get('ffmpeg_timeout', 3600), 3600)
                 
                 chunk_result = chunk_processor.process_video_ffmpeg(
                     video_path=chunk_path,
@@ -578,8 +578,8 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
             "task_id": task_id,
             "status": "completed",
             "fragments_count": len(fragments),
-            "total_duration": sum(f["duration"] for f in fragments),
-            "total_size_bytes": sum(f["size_bytes"] for f in fragments),
+            "total_duration": sum(f.get("duration", 0) for f in fragments if isinstance(f, dict) and "duration" in f),
+            "total_size_bytes": sum(f.get("size_bytes", 0) for f in fragments if isinstance(f, dict) and "size_bytes" in f),
             "drive_uploads": len(successful_uploads),
             "fragments": fragments,
             "failed_chunks": failed_chunks if failed_chunks else None
@@ -735,7 +735,7 @@ def log_to_sheets(
         video_title=download_result.get('title', 'Unknown'),
         source_url=download_result.get('url', ''),
         fragments_count=len(fragments),
-        total_duration=sum(f['duration'] for f in fragments),
+        total_duration=sum(f.get('duration', 0) for f in fragments if isinstance(f, dict) and 'duration' in f),
         settings=settings_dict,
         drive_links=drive_links
     )
@@ -773,8 +773,8 @@ def cleanup_stale_tasks() -> Dict[str, Any]:
     try:
         from datetime import datetime, timedelta
         
-        # Consider tasks stuck in processing for more than 1 hour as stale (было 2 часа)
-        cutoff_time = datetime.utcnow() - timedelta(hours=1)
+        # Consider tasks stuck in processing for more than 4 hours as stale (увеличено для больших видео)
+        cutoff_time = datetime.utcnow() - timedelta(hours=4)
         
         tasks_cleaned = 0
         
