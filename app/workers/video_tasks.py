@@ -504,17 +504,21 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 with get_sync_db_session() as session:
                     fragment = session.get(VideoFragment, fragment_data['id'])
                     if fragment and drive_url:
-                        fragment.drive_url = drive_url
-                        # Правильно работаем с JSON полем metadata
-                        if fragment.metadata is None:
-                            fragment.metadata = {}
+                        # Correctly handle JSON metadata field
                         
-                        # Создаем копию metadata для обновления
-                        updated_metadata = dict(fragment.metadata) if fragment.metadata else {}
+                        # Defensive copy to prevent errors with corrupted metadata
+                        current_metadata = fragment.metadata
+                        if isinstance(current_metadata, dict):
+                            updated_metadata = current_metadata.copy()
+                        else:
+                            # If metadata is corrupted or not a dict, reset it.
+                            logger.warning(f"Fragment {fragment.id} metadata was corrupted. Type: {type(current_metadata)}. Resetting.")
+                            updated_metadata = {}
+                        
                         updated_metadata['view_url'] = view_url
                         updated_metadata['public'] = upload_result.get('public', False)
                         
-                        # Присваиваем обновленный словарь
+                        # Assign the updated dictionary back
                         fragment.metadata = updated_metadata
                         
                         session.commit()

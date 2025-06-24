@@ -24,6 +24,7 @@ from app.bot.keyboards.main_menu import (
 from app.config.constants import VideoStatus, SUPPORTED_SOURCES, ERROR_MESSAGES, SUCCESS_MESSAGES
 from app.database.connection import get_db_session
 from app.database.models import VideoTask, User, VideoFragment
+from app.services.redis_service import redis_client
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -566,95 +567,82 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
     """
     user_id = callback.from_user.id
     data = await state.get_data()
+    source_url = data.get("source_url")
+
+    # --- Atomic lock to prevent race conditions ---
+    lock_key = f"lock:user:{user_id}:url:{source_url}"
+    if not await redis_client.set(lock_key, "1", nx=True, ex=30): # 30-second lock
+        await callback.answer("⏳ Запрос уже обрабатывается. Пожалуйста, подождите.", show_alert=True)
+        return
     
-    async with get_db_session() as session:
-        # Check for existing active tasks (but ignore old ones from previous runs)
-        from sqlalchemy import select, update
-        from datetime import datetime, timedelta
-        
-        # Consider tasks older than 4 hours as "stale" and can be ignored (увеличено для больших видео)
-        cutoff_time = datetime.utcnow() - timedelta(hours=4)
-        
-        result = await session.execute(
-            select(VideoTask).where(
-                VideoTask.user_id == user_id,
-                VideoTask.status.in_([VideoStatus.PENDING, VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING]),
-                VideoTask.created_at > cutoff_time  # Only check recent tasks
+    try:
+        async with get_db_session() as session:
+            # Check for existing active tasks for this specific URL
+            from sqlalchemy import select
+            from datetime import datetime, timedelta
+            
+            cutoff_time = datetime.utcnow() - timedelta(hours=4)
+            
+            result = await session.execute(
+                select(VideoTask).where(
+                    VideoTask.user_id == user_id,
+                    VideoTask.source_url == source_url,
+                    VideoTask.status.in_([
+                        VideoStatus.PENDING, 
+                        VideoStatus.DOWNLOADING, 
+                        VideoStatus.PROCESSING, 
+                        VideoStatus.UPLOADING
+                    ]),
+                    VideoTask.created_at > cutoff_time
+                )
             )
-        )
-        
-        existing_task = result.scalars().first()
-        
-        if existing_task:
-            # Check if the task is really active or just stuck
-            task_age = datetime.utcnow() - existing_task.created_at
-            if task_age.total_seconds() > 14400:  # 4 hours
-                # Task is too old, mark as failed and continue
-                existing_task.status = VideoStatus.FAILED
-                existing_task.error_message = "Задача отменена из-за превышения времени выполнения"
-                await session.commit()
-                logger.info(f"Marked old stuck task {existing_task.id} as failed for user {user_id}")
-            else:
+            
+            existing_task = result.scalars().first()
+            
+            if existing_task:
                 await callback.answer(
-                    f"⚠️ У вас уже есть активная задача обработки!\n"
+                    f"⚠️ Для этого URL уже есть активная задача!\n"
                     f"ID: {str(existing_task.id)[:8]}\n"
-                    f"Статус: {existing_task.status.value}\n"
-                    f"Прогресс: {existing_task.progress or 0}%",
+                    f"Статус: {existing_task.status.value}",
                     show_alert=True
                 )
                 return
-        
-        # Mark old stale tasks as failed to clean up database
-        stale_tasks_result = await session.execute(
-            update(VideoTask).where(
-                VideoTask.user_id == user_id,
-                VideoTask.status.in_([VideoStatus.PENDING, VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING]),
-                VideoTask.created_at <= cutoff_time
-            ).values(
-                status=VideoStatus.FAILED,
-                error_message="Задача отменена из-за перезапуска системы"
+            
+            # Create video task in database
+            task_id = str(uuid.uuid4())
+            
+            # Get or create user
+            user = await session.get(User, user_id)
+            if not user:
+                user = User(
+                    id=user_id,
+                    username=callback.from_user.username,
+                    first_name=callback.from_user.first_name,
+                    last_name=callback.from_user.last_name
+                )
+                session.add(user)
+            
+            # Create video task
+            video_task = VideoTask(
+                id=task_id,
+                user_id=user_id,
+                source_url=data.get("source_url"),
+                original_filename=data.get("file_name"),
+                status=VideoStatus.PENDING,
+                settings=data.get("settings", {}),
+                metadata={}
             )
-        )
-        
-        if stale_tasks_result.rowcount > 0:
+            session.add(video_task)
             await session.commit()
-            logger.info(f"Cleaned up {stale_tasks_result.rowcount} stale tasks for user {user_id}")
+            
+            # Log task creation
+            logger.info(f"Created new video task {task_id} for user {user_id} with URL: {data.get('source_url', 'N/A')}")
         
-        # Create video task in database
-        task_id = str(uuid.uuid4())
+        # Start processing workflow
+        await state.set_state(VideoProcessingStates.processing)
+        await state.update_data(task_id=task_id)
         
-        # Get or create user
-        user = await session.get(User, user_id)
-        if not user:
-            user = User(
-                id=user_id,
-                username=callback.from_user.username,
-                first_name=callback.from_user.first_name,
-                last_name=callback.from_user.last_name
-            )
-            session.add(user)
-        
-        # Create video task
-        video_task = VideoTask(
-            id=task_id,
-            user_id=user_id,
-            source_url=data.get("source_url"),
-            original_filename=data.get("file_name"),
-            status=VideoStatus.PENDING,
-            settings=data.get("settings", {}),
-            metadata={}
-        )
-        session.add(video_task)
-        await session.commit()
-        
-        # Log task creation
-        logger.info(f"Created new video task {task_id} for user {user_id} with URL: {data.get('source_url', 'N/A')}")
-    
-    # Start processing workflow
-    await state.set_state(VideoProcessingStates.processing)
-    await state.update_data(task_id=task_id)
-    
-    text = f"""
+        text = f"""
 🚀 <b>Оптимизированная обработка запущена!</b>
 
 📋 ID задачи: <code>{task_id}</code>
@@ -675,55 +663,58 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
 • Ведение статистики в Google Sheets
 
 Я уведомлю вас о завершении обработки.
-    """
-    
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_task_status_keyboard(task_id),
-        parse_mode="HTML"
-    )
-    
-    # Start optimized Celery task chain
-    from app.workers.video_tasks import process_video_chain_optimized
-    from app.video_processing.downloader import VideoDownloader
-
-    if data.get("input_type") == "url":
-        # Process from URL with optimized workflow
-        source_url = data.get("source_url")
-        settings = data.get("settings", {})
-
-        # Получаем длительность видео до скачивания
-        try:
-            downloader = VideoDownloader()
-            info = downloader.get_video_info(source_url)
-            duration_sec = int(info.get('duration', 0))
-        except Exception as e:
-            duration_sec = 0  # fallback
-
-        # Функция для расчёта лимита времени (увеличено для больших видео)
-        def get_time_limit_for_video(video_duration_sec):
-            base = video_duration_sec * 2.0 * 1.5  # Увеличены коэффициенты
-            return int(min(max(base, 1200), 21600))  # от 20 минут до 6 часов
-
-        soft_limit = get_time_limit_for_video(duration_sec)
-        hard_limit = soft_limit + 300  # +5 минут запас
-
-        # Передаём ffmpeg_timeout в settings (на 1 минуту меньше лимита задачи)
-        settings['ffmpeg_timeout'] = max(soft_limit - 60, 300)
-
-        process_video_chain_optimized.apply_async(
-            args=[task_id, source_url, settings],
-            soft_time_limit=soft_limit,
-            time_limit=hard_limit
-        )
-    else:
-        # Process from uploaded file
-        # TODO: Implement file processing
+        """
+        
         await callback.message.edit_text(
-            "❌ <b>Обработка файлов пока не поддерживается</b>\n\nИспользуйте ссылку на видео.",
+            text,
+            reply_markup=get_task_status_keyboard(task_id),
             parse_mode="HTML"
         )
-        return
+        
+        # Start optimized Celery task chain
+        from app.workers.video_tasks import process_video_chain_optimized
+        from app.video_processing.downloader import VideoDownloader
+
+        if data.get("input_type") == "url":
+            # Process from URL with optimized workflow
+            settings = data.get("settings", {})
+
+            # Получаем длительность видео до скачивания
+            try:
+                downloader = VideoDownloader()
+                info = downloader.get_video_info(source_url)
+                duration_sec = int(info.get('duration', 0))
+            except Exception as e:
+                duration_sec = 0  # fallback
+
+            # Функция для расчёта лимита времени (увеличено для больших видео)
+            def get_time_limit_for_video(video_duration_sec):
+                base = video_duration_sec * 2.0 * 1.5  # Увеличены коэффициенты
+                return int(min(max(base, 1200), 21600))  # от 20 минут до 6 часов
+
+            soft_limit = get_time_limit_for_video(duration_sec)
+            hard_limit = soft_limit + 300  # +5 минут запас
+
+            # Передаём ffmpeg_timeout в settings (на 1 минуту меньше лимита задачи)
+            settings['ffmpeg_timeout'] = max(soft_limit - 60, 300)
+
+            process_video_chain_optimized.apply_async(
+                args=[task_id, source_url, settings],
+                soft_time_limit=soft_limit,
+                time_limit=hard_limit
+            )
+        else:
+            # Process from uploaded file
+            # TODO: Implement file processing
+            await callback.message.edit_text(
+                "❌ <b>Обработка файлов пока не поддерживается</b>\n\nИспользуйте ссылку на видео.",
+                parse_mode="HTML"
+            )
+            return
+            
+    finally:
+        # --- Release the lock ---
+        await redis_client.delete(lock_key)
 
 
 @router.callback_query(VideoAction.filter(F.action == "my_tasks"))
