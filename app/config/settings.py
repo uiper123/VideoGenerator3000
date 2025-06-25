@@ -4,7 +4,7 @@ Uses Pydantic Settings for validation and environment variable management.
 """
 import os
 from typing import Optional, List
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, SecretStr
 from pydantic_settings import BaseSettings
 
 
@@ -192,7 +192,7 @@ class AppSettings(BaseSettings):
     secret_key: str = Field(default="your-secret-key-change-in-production", env="SECRET_KEY")
     
     # Telegram settings
-    telegram_bot_token: str = Field(..., env="TELEGRAM_BOT_TOKEN")
+    telegram_bot_token: SecretStr = Field(..., env="TELEGRAM_BOT_TOKEN")
     telegram_admin_ids: str = Field(default="", env="TELEGRAM_ADMIN_IDS")
     
     # Database settings
@@ -215,6 +215,9 @@ class AppSettings(BaseSettings):
     # Google API settings
     google_credentials_path: str = "google-credentials.json"
     google_spreadsheet_id: Optional[str] = Field(default=None, env="GOOGLE_SPREADSHEET_ID")
+
+    # YouTube Download
+    youtube_cookies_file_path: Optional[str] = Field(None, env="YOUTUBE_COOKIES_FILE_PATH")
 
     def get_admin_ids_list(self) -> List[int]:
         """Parse admin IDs string into list of integers."""

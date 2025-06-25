@@ -13,6 +13,8 @@ import uuid
 from pytubefix import YouTube
 from pytubefix.exceptions import VideoUnavailable, RegexMatchError
 
+from app.config.settings import settings
+
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -116,6 +118,10 @@ class VideoDownloader:
         """
         strategies = [
             {
+                'name': 'ytdlp_with_cookies',
+                'method': lambda: self._try_ytdlp_download_with_cookies(url, quality)
+            },
+            {
                 'name': 'yt-dlp_advanced_bypass',
                 'method': lambda: self._try_ytdlp_download(url, quality, [
                     '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -201,6 +207,21 @@ class VideoDownloader:
             raise DownloadError(f"All download strategies failed. YouTube может блокировать автоматическое скачивание. Попробуйте другое видео или повторите позже. Последняя ошибка: {last_error}")
         else:
             raise DownloadError("All download strategies failed with unknown errors")
+    
+    def _try_ytdlp_download_with_cookies(self, url: str, quality: str) -> Dict[str, Any]:
+        """
+        Try downloading with yt-dlp using a cookies file.
+        This is the most reliable method to bypass bot detection.
+        """
+        cookies_file = settings.youtube_cookies_file_path
+        if not cookies_file or not os.path.exists(cookies_file):
+            raise DownloadError("Cookies file not configured or not found. Skipping strategy.")
+            
+        logger.info(f"Attempting download with cookies from: {cookies_file}")
+        
+        # We can reuse the main ytdlp download function and just add the cookies argument
+        extra_args = ['--cookies', cookies_file]
+        return self._try_ytdlp_download(url, quality, extra_args)
     
     def _try_alternative_url_formats(self, url: str, quality: str) -> Dict[str, Any]:
         """
