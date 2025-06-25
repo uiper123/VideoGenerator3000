@@ -974,7 +974,7 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                         elif "drive.google.com/file/d/" in link:
                             f.write(f"👁️ {link}\n")
                         else:
-                        f.write(f"{link}\n")
+                            f.write(f"{link}\n")
                     
                     f.write(f"\n✅ Все файлы готовы к использованию!")
                     f.write(f"\n🤖 Прямые ссылки совместимы с ботами для автоматического скачивания")
