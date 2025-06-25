@@ -214,7 +214,24 @@ class VideoDownloader:
         This is the most reliable method to bypass bot detection.
         """
         cookies_file = settings.youtube_cookies_file_path
-        if not cookies_file or not os.path.exists(cookies_file):
+        
+        # If no explicit path set, try default location
+        if not cookies_file:
+            cookies_file = "/app/youtube_cookies.txt"
+        
+        # If file doesn't exist, try to create it from environment variable
+        if not os.path.exists(cookies_file) and settings.youtube_cookies_content:
+            try:
+                # Create cookies file from environment variable content
+                os.makedirs(os.path.dirname(cookies_file), exist_ok=True)
+                with open(cookies_file, 'w', encoding='utf-8') as f:
+                    f.write(settings.youtube_cookies_content)
+                logger.info(f"Created cookies file from environment variable: {cookies_file}")
+            except Exception as e:
+                logger.warning(f"Failed to create cookies file from environment variable: {e}")
+        
+        # Check if cookies file exists
+        if not os.path.exists(cookies_file):
             raise DownloadError("Cookies file not configured or not found. Skipping strategy.")
             
         logger.info(f"Attempting download with cookies from: {cookies_file}")

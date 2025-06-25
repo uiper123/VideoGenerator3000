@@ -218,6 +218,7 @@ class AppSettings(BaseSettings):
 
     # YouTube Download
     youtube_cookies_file_path: Optional[str] = Field(None, env="YOUTUBE_COOKIES_FILE_PATH")
+    youtube_cookies_content: Optional[str] = Field(None, env="YOUTUBE_COOKIES_CONTENT")
 
     def get_admin_ids_list(self) -> List[int]:
         """Parse admin IDs string into list of integers."""
