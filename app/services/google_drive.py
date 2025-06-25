@@ -439,5 +439,5 @@ class GoogleDriveService:
         failed_uploads = [r for r in upload_results if not r.get("success")]
         
         logger.info(f"Upload summary to '{folder_name}': {len(successful_uploads)} successful, {len(failed_uploads)} failed (saves space by not creating individual task folders)")
-        
+
         return upload_results 

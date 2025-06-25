@@ -576,16 +576,16 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
         return
     
     try:
-    async with get_db_session() as session:
+        async with get_db_session() as session:
             # Check for existing active tasks for this specific URL
             from sqlalchemy import select
-        from datetime import datetime, timedelta
-        
+            from datetime import datetime, timedelta
+            
             cutoff_time = datetime.utcnow() - timedelta(hours=4)
-        
-        result = await session.execute(
-            select(VideoTask).where(
-                VideoTask.user_id == user_id,
+            
+            result = await session.execute(
+                select(VideoTask).where(
+                    VideoTask.user_id == user_id,
                     VideoTask.source_url == source_url,
                     VideoTask.status.in_([
                         VideoStatus.PENDING, 
@@ -594,55 +594,55 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
                         VideoStatus.UPLOADING
                     ]),
                     VideoTask.created_at > cutoff_time
+                )
             )
-        )
-        
-        existing_task = result.scalars().first()
-        
-        if existing_task:
+            
+            existing_task = result.scalars().first()
+            
+            if existing_task:
                 await callback.answer(
                     f"⚠️ Для этого URL уже есть активная задача!\n"
                     f"ID: {str(existing_task.id)[:8]}\n"
                     f"Статус: {existing_task.status.value}",
                     show_alert=True
                 )
-            return
-        
-        # Create video task in database
-        task_id = str(uuid.uuid4())
-        
-        # Get or create user
-        user = await session.get(User, user_id)
-        if not user:
-            user = User(
-                id=user_id,
-                username=callback.from_user.username,
-                first_name=callback.from_user.first_name,
-                last_name=callback.from_user.last_name
+                return
+            
+            # Create video task in database
+            task_id = str(uuid.uuid4())
+            
+            # Get or create user
+            user = await session.get(User, user_id)
+            if not user:
+                user = User(
+                    id=user_id,
+                    username=callback.from_user.username,
+                    first_name=callback.from_user.first_name,
+                    last_name=callback.from_user.last_name
+                )
+                session.add(user)
+            
+            # Create video task
+            video_task = VideoTask(
+                id=task_id,
+                user_id=user_id,
+                source_url=data.get("source_url"),
+                original_filename=data.get("file_name"),
+                status=VideoStatus.PENDING,
+                settings=data.get("settings", {}),
+                metadata={}
             )
-            session.add(user)
-        
-        # Create video task
-        video_task = VideoTask(
-            id=task_id,
-            user_id=user_id,
-            source_url=data.get("source_url"),
-            original_filename=data.get("file_name"),
-            status=VideoStatus.PENDING,
-            settings=data.get("settings", {}),
-            metadata={}
-        )
-        session.add(video_task)
-        await session.commit()
+            session.add(video_task)
+            await session.commit()
             
             # Log task creation
             logger.info(f"Created new video task {task_id} for user {user_id} with URL: {data.get('source_url', 'N/A')}")
-    
-    # Start processing workflow
-    await state.set_state(VideoProcessingStates.processing)
-    await state.update_data(task_id=task_id)
-    
-    text = f"""
+        
+        # Start processing workflow
+        await state.set_state(VideoProcessingStates.processing)
+        await state.update_data(task_id=task_id)
+        
+        text = f"""
 🚀 <b>Оптимизированная обработка запущена!</b>
 
 📋 ID задачи: <code>{task_id}</code>
@@ -663,54 +663,54 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
 • Ведение статистики в Google Sheets
 
 Я уведомлю вас о завершении обработки.
-    """
-    
-    await callback.message.edit_text(
-        text,
-        reply_markup=get_task_status_keyboard(task_id),
-        parse_mode="HTML"
-    )
-    
-    # Start optimized Celery task chain
-    from app.workers.video_tasks import process_video_chain_optimized
-    from app.video_processing.downloader import VideoDownloader
+        """
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=get_task_status_keyboard(task_id),
+            parse_mode="HTML"
+        )
+        
+        # Start optimized Celery task chain
+        from app.workers.video_tasks import process_video_chain_optimized
+        from app.video_processing.downloader import VideoDownloader
 
-    if data.get("input_type") == "url":
-        # Process from URL with optimized workflow
-        settings = data.get("settings", {})
+        if data.get("input_type") == "url":
+            # Process from URL with optimized workflow
+            settings = data.get("settings", {})
 
-        # Получаем длительность видео до скачивания
-        try:
-            downloader = VideoDownloader()
-            info = downloader.get_video_info(source_url)
-            duration_sec = int(info.get('duration', 0))
-        except Exception as e:
-            duration_sec = 0  # fallback
+            # Получаем длительность видео до скачивания
+            try:
+                downloader = VideoDownloader()
+                info = downloader.get_video_info(source_url)
+                duration_sec = int(info.get('duration', 0))
+            except Exception as e:
+                duration_sec = 0  # fallback
 
             # Функция для расчёта лимита времени (увеличено для больших видео)
-        def get_time_limit_for_video(video_duration_sec):
+            def get_time_limit_for_video(video_duration_sec):
                 base = video_duration_sec * 2.0 * 1.5  # Увеличены коэффициенты
                 return int(min(max(base, 1200), 21600))  # от 20 минут до 6 часов
 
-        soft_limit = get_time_limit_for_video(duration_sec)
-        hard_limit = soft_limit + 300  # +5 минут запас
+            soft_limit = get_time_limit_for_video(duration_sec)
+            hard_limit = soft_limit + 300  # +5 минут запас
 
-        # Передаём ffmpeg_timeout в settings (на 1 минуту меньше лимита задачи)
-        settings['ffmpeg_timeout'] = max(soft_limit - 60, 300)
+            # Передаём ffmpeg_timeout в settings (на 1 минуту меньше лимита задачи)
+            settings['ffmpeg_timeout'] = max(soft_limit - 60, 300)
 
-        process_video_chain_optimized.apply_async(
-            args=[task_id, source_url, settings],
-            soft_time_limit=soft_limit,
-            time_limit=hard_limit
-        )
-    else:
-        # Process from uploaded file
-        # TODO: Implement file processing
-        await callback.message.edit_text(
-            "❌ <b>Обработка файлов пока не поддерживается</b>\n\nИспользуйте ссылку на видео.",
-            parse_mode="HTML"
-        )
-        return
+            process_video_chain_optimized.apply_async(
+                args=[task_id, source_url, settings],
+                soft_time_limit=soft_limit,
+                time_limit=hard_limit
+            )
+        else:
+            # Process from uploaded file
+            # TODO: Implement file processing
+            await callback.message.edit_text(
+                "❌ <b>Обработка файлов пока не поддерживается</b>\n\nИспользуйте ссылку на видео.",
+                parse_mode="HTML"
+            )
+            return
             
     finally:
         # --- Release the lock ---
