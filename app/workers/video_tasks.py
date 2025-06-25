@@ -486,7 +486,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         drive_service = GoogleDriveService()
         upload_results = drive_service.upload_multiple_files(
             file_paths=[f["local_path"] for f in fragments],
-            folder_name=f"VideoBot_Task_{task_id}"
+            task_id=task_id
         )
         successful_uploads = [r for r in upload_results if r.get("success")]
         logger.info(f"Successfully uploaded {len(successful_uploads)}/{len(fragments)} files to Google Drive.")
@@ -690,14 +690,10 @@ def upload_to_drive(task_id: str, fragments: List[Dict[str, Any]]) -> List[Dict[
     from app.services.google_drive import GoogleDriveService
     
     drive_service = GoogleDriveService()
-    folder_name = f"VideoBot_Task_{task_id}"
     
-    # Create folder for this task
-    folder_result = drive_service.create_folder(folder_name)
-    
-    # Upload all fragments
+    # Upload all fragments to target folder (no longer creates individual task folders)
     file_paths = [fragment['local_path'] for fragment in fragments]
-    upload_results = drive_service.upload_multiple_files(file_paths, folder_name)
+    upload_results = drive_service.upload_multiple_files(file_paths, task_id=task_id)
     
     logger.info(f"Uploaded {len(upload_results)} fragments to Google Drive for task {task_id}")
     return upload_results

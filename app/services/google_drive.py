@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
+# Target folder ID for all processed videos
+TARGET_FOLDER_ID = "1q3DdrbnGRSAKL6Omiy6t0MghP4ZGtiTn"
+
 def get_google_credentials() -> Optional[service_account.Credentials]:
     """
     Get Google credentials from Base64 env var or from a file.
@@ -314,12 +317,63 @@ class GoogleDriveService:
                 "direct_link": direct_link
             }
     
-    def upload_multiple_files(self, file_paths: List[str], folder_name: str) -> List[Dict[str, Any]]:
-        """Upload multiple files to a specific folder, creating it if it doesn't exist."""
+    def verify_target_folder_access(self) -> Dict[str, Any]:
+        """Verify that the service account has access to the target folder."""
+        if not self.service:
+            logger.info(f"Mock verifying access to target folder: {TARGET_FOLDER_ID}")
+            return {
+                "accessible": True,
+                "folder_id": TARGET_FOLDER_ID,
+                "folder_name": "Mock Target Folder"
+            }
+        
+        try:
+            # Try to get folder metadata
+            folder_metadata = self.service.files().get(
+                fileId=TARGET_FOLDER_ID, 
+                fields='id,name,mimeType,permissions'
+            ).execute()
+            
+            folder_name = folder_metadata.get('name', 'Unknown')
+            mime_type = folder_metadata.get('mimeType', '')
+            
+            is_folder = mime_type == 'application/vnd.google-apps.folder'
+            
+            logger.info(f"Target folder access verified: {folder_name} (ID: {TARGET_FOLDER_ID})")
+            
+            return {
+                "accessible": True,
+                "folder_id": TARGET_FOLDER_ID,
+                "folder_name": folder_name,
+                "is_folder": is_folder
+            }
+            
+        except HttpError as e:
+            error_code = e.resp.status
+            error_message = str(e)
+            
+            logger.error(f"Cannot access target folder {TARGET_FOLDER_ID}: {error_message}")
+            
+            return {
+                "accessible": False,
+                "folder_id": TARGET_FOLDER_ID,
+                "error_code": error_code,
+                "error": error_message
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error verifying target folder access: {e}")
+            return {
+                "accessible": False,
+                "folder_id": TARGET_FOLDER_ID,
+                "error": str(e)
+            }
+    
+    def upload_multiple_files(self, file_paths: List[str], task_id: str = None) -> List[Dict[str, Any]]:
+        """Upload multiple files to the target folder (no longer creates new folders)."""
         if not self.service:
             results = []
             for file_path in file_paths:
-                result = self.upload_file(file_path, folder_name)
+                result = self.upload_file(file_path, TARGET_FOLDER_ID)
                 results.append({
                     "success": True,
                     "file_path": file_path,
@@ -332,10 +386,21 @@ class GoogleDriveService:
                 })
             return results
 
-        folder = self.create_folder(folder_name)
-        if not folder:
-            logger.error(f"Failed to create or find folder '{folder_name}'. Aborting upload.")
-            return []
+        # Verify access to target folder before uploading
+        folder_access = self.verify_target_folder_access()
+        if not folder_access.get('accessible'):
+            error_msg = f"Cannot access target folder {TARGET_FOLDER_ID}: {folder_access.get('error', 'Unknown error')}"
+            logger.error(error_msg)
+            return [{
+                "success": False,
+                "file_path": file_path,
+                "error": error_msg
+            } for file_path in file_paths]
+
+        # Use the target folder directly instead of creating new folders
+        target_folder_id = TARGET_FOLDER_ID
+        folder_name = folder_access.get('folder_name', 'Target Folder')
+        logger.info(f"Uploading {len(file_paths)} files to '{folder_name}' (ID: {target_folder_id}) for task {task_id or 'unknown'}")
 
         upload_results = []
         for file_path in file_paths:
@@ -348,7 +413,7 @@ class GoogleDriveService:
                 })
                 continue
             
-            result = self.upload_file(file_path, folder['id'])
+            result = self.upload_file(file_path, target_folder_id)
             if result and result.get('id'):
                 upload_results.append({
                     "success": True,
@@ -373,6 +438,6 @@ class GoogleDriveService:
         successful_uploads = [r for r in upload_results if r.get("success")]
         failed_uploads = [r for r in upload_results if not r.get("success")]
         
-        logger.info(f"Upload summary for folder '{folder_name}': {len(successful_uploads)} successful, {len(failed_uploads)} failed")
+        logger.info(f"Upload summary to '{folder_name}': {len(successful_uploads)} successful, {len(failed_uploads)} failed (saves space by not creating individual task folders)")
         
         return upload_results 
