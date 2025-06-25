@@ -689,11 +689,13 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
 
             # Функция для расчёта лимита времени (увеличено для больших видео)
             def get_time_limit_for_video(video_duration_sec):
-                base = video_duration_sec * 2.0 * 1.5  # Увеличены коэффициенты
-                return int(min(max(base, 1200), 21600))  # от 20 минут до 6 часов
+                # Коэффициент 5: даём в 5 раз больше времени, чем длительность видео
+                base = video_duration_sec * 5.0
+                # Лимит: от 1 часа до 12 часов
+                return int(min(max(base, 3600), 43200))
 
             soft_limit = get_time_limit_for_video(duration_sec)
-            hard_limit = soft_limit + 300  # +5 минут запас
+            hard_limit = soft_limit + 600  # +10 минут запас
 
             # Передаём ffmpeg_timeout в settings (на 1 минуту меньше лимита задачи)
             settings['ffmpeg_timeout'] = max(soft_limit - 60, 300)
