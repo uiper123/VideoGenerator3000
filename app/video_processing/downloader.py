@@ -213,25 +213,8 @@ class VideoDownloader:
         Try downloading with yt-dlp using a cookies file.
         This is the most reliable method to bypass bot detection.
         """
-        cookies_file = settings.youtube_cookies_file_path
-        
-        # If no explicit path set, try default location
+        cookies_file = self._get_cookies_path()
         if not cookies_file:
-            cookies_file = "/app/youtube_cookies.txt"
-        
-        # If file doesn't exist, try to create it from environment variable
-        if not os.path.exists(cookies_file) and settings.youtube_cookies_content:
-            try:
-                # Create cookies file from environment variable content
-                os.makedirs(os.path.dirname(cookies_file), exist_ok=True)
-                with open(cookies_file, 'w', encoding='utf-8') as f:
-                    f.write(settings.youtube_cookies_content)
-                logger.info(f"Created cookies file from environment variable: {cookies_file}")
-            except Exception as e:
-                logger.warning(f"Failed to create cookies file from environment variable: {e}")
-        
-        # Check if cookies file exists
-        if not os.path.exists(cookies_file):
             raise DownloadError("Cookies file not configured or not found. Skipping strategy.")
             
         logger.info(f"Attempting download with cookies from: {cookies_file}")
@@ -623,18 +606,22 @@ class VideoDownloader:
     
     def get_video_info(self, url: str) -> Dict[str, Any]:
         """
-        Get video information without downloading.
-        
-        Args:
-            url: Video URL
-            
-        Returns:
-            Dict with video information
+        Get video information without downloading. Now uses cookies for reliability.
         """
         try:
             if self._is_youtube_url(url):
-                # Try PyTubeFix first, then fallback to yt-dlp
+                # Strategy 1: Try yt-dlp with cookies first (most reliable)
                 try:
+                    logger.info("Attempting info extraction with yt-dlp and cookies...")
+                    cookies_file = self._get_cookies_path()
+                    if cookies_file:
+                        return self._get_video_info_ytdlp(url, extra_args=['--cookies', cookies_file])
+                except Exception as e:
+                    logger.warning(f"Info extraction with cookies failed: {e}")
+
+                # Strategy 2: Fallback to PyTubeFix
+                try:
+                    logger.info("Falling back to PyTubeFix for info extraction...")
                     yt = YouTube(url, use_oauth=False, allow_oauth_cache=False, use_po_token=False)
                     return {
                         'title': yt.title,
@@ -647,25 +634,35 @@ class VideoDownloader:
                     }
                 except Exception as e:
                     logger.warning(f"PyTubeFix info extraction failed: {e}")
-                    logger.info("Attempting info extraction with yt-dlp...")
+
+                # Strategy 3: Fallback to yt-dlp without cookies
+                try:
+                    logger.info("Falling back to yt-dlp without cookies...")
                     return self._get_video_info_ytdlp(url)
-            else:
-                raise DownloadError("Unsupported URL for info extraction")
-                
+                except Exception as e:
+                    logger.warning(f"yt-dlp info extraction without cookies failed: {e}")
+            
+            # If all strategies fail for YouTube, or if not a YouTube URL
+            raise DownloadError("All strategies to get video info failed.")
+
         except Exception as e:
-            logger.error(f"Failed to get video info: {e}")
+            logger.error(f"Failed to get video info for {url}: {e}")
             raise DownloadError(f"Failed to get video info: {e}")
     
-    def _get_video_info_ytdlp(self, url: str) -> Dict[str, Any]:
+    def _get_video_info_ytdlp(self, url: str, extra_args: list = None) -> Dict[str, Any]:
         """
         Get video information using yt-dlp as fallback.
         
         Args:
             url: Video URL
+            extra_args: Optional list of extra arguments for yt-dlp
             
         Returns:
             Dict with video information
         """
+        if extra_args is None:
+            extra_args = []
+            
         try:
             info_cmd = [
                 'yt-dlp',
@@ -674,6 +671,7 @@ class VideoDownloader:
                 '--no-playlist',
                 '--ignore-errors',
                 '--socket-timeout', '30',
+            ] + extra_args + [
                 '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 '--referer', 'https://www.youtube.com/',
                 url
@@ -728,4 +726,10 @@ class VideoDownloader:
             return False
         except Exception as e:
             logger.error(f"Failed to cleanup {file_path}: {e}")
-            return False 
+            return False
+
+    def _get_cookies_path(self):
+        cookies_file = settings.youtube_cookies_file_path
+        if not cookies_file:
+            cookies_file = "/app/youtube_cookies.txt"
+        return cookies_file if os.path.exists(cookies_file) else None 
