@@ -504,9 +504,10 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 with get_sync_db_session() as session:
                     fragment = session.get(VideoFragment, fragment_data['id'])
                     if fragment and drive_url:
-                        # Correctly handle JSON metadata field
+                        # КРИТИЧЕСКИ ВАЖНО: Сохраняем URL в поле drive_url!
+                        fragment.drive_url = drive_url
                         
-                        # Defensive copy to prevent errors with corrupted metadata
+                        # Correctly handle JSON metadata field
                         current_metadata = fragment.metadata
                         if isinstance(current_metadata, dict):
                             updated_metadata = current_metadata.copy()
@@ -934,22 +935,40 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
             
             # Get drive links
             drive_links = []
+            logger.info(f"Processing {len(fragments)} fragments for task {task_id}")
+            
             for fragment in fragments:
-                if fragment.drive_url:
+                # Получаем drive_url из базы данных или из metadata как fallback
+                drive_url = fragment.drive_url
+                view_url = None
+                
+                # Fallback: если drive_url пустой, пытаемся получить из metadata
+                if not drive_url and fragment.metadata and isinstance(fragment.metadata, dict):
+                    view_url = fragment.metadata.get('view_url')
+                    if view_url:
+                        drive_url = view_url
+                        logger.info(f"Using view_url from metadata for fragment {fragment.fragment_number}")
+                
+                if drive_url:
                     # Проверяем, является ли ссылка прямой ссылкой для скачивания
-                    if "drive.google.com/uc?id=" in fragment.drive_url:
-                        link_type = "📥 Прямая ссылка (для ботов)"
+                    if "drive.google.com/uc?id=" in drive_url:
+                        link_type = "📥 Прямая ссылка"
                     else:
                         link_type = "👁️ Ссылка для просмотра"
                     
-                    drive_links.append(f"Фрагмент {fragment.fragment_number}: {fragment.drive_url}")
+                    drive_links.append(f"Фрагмент {fragment.fragment_number}: {drive_url}")
+                    logger.info(f"Added link for fragment {fragment.fragment_number}: {link_type}")
                     
-                    # Добавляем view URL если есть в метаданных
-                    if (hasattr(fragment, 'metadata') and fragment.metadata and 
-                        isinstance(fragment.metadata, dict) and fragment.metadata.get('view_url')):
+                    # Добавляем view URL если есть в метаданных и отличается от основной ссылки
+                    if (fragment.metadata and isinstance(fragment.metadata, dict) and 
+                        fragment.metadata.get('view_url') and 
+                        fragment.metadata.get('view_url') != drive_url):
                         view_url = fragment.metadata.get('view_url')
-                        if view_url and view_url != fragment.drive_url:
-                            drive_links.append(f"  └ Просмотр: {view_url}")
+                        drive_links.append(f"  └ Просмотр: {view_url}")
+                else:
+                    logger.warning(f"No drive URL found for fragment {fragment.fragment_number} (ID: {fragment.id})")
+            
+            logger.info(f"Collected {len(drive_links)} drive links for notification")
         
         async def send_notification():
             bot = Bot(token=settings.telegram_bot_token.get_secret_value())
@@ -957,28 +976,36 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
             # Create links file if we have drive links
             links_file_path = None
             if drive_links:
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-                    f.write(f"🎬 Ссылки на обработанные видео\n")
-                    f.write(f"📋 ID задачи: {task_id}\n")
-                    f.write(f"📊 Всего фрагментов: {actual_fragments_count}\n")
-                    f.write(f"📅 Дата создания: {task.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                logger.info(f"Creating links file with {len(drive_links)} links")
+                try:
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+                        f.write(f"🎬 Ссылки на обработанные видео\n")
+                        f.write(f"📋 ID задачи: {task_id}\n")
+                        f.write(f"📊 Всего фрагментов: {actual_fragments_count}\n")
+                        f.write(f"📅 Дата создания: {task.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                        
+                        f.write("💡 ИНФОРМАЦИЯ О ССЫЛКАХ:\n")
+                        f.write("• Прямые ссылки (📥) - для автоматического скачивания ботами\n")
+                        f.write("• Ссылки просмотра (👁️) - для открытия в браузере\n\n")
+                        
+                        for link in drive_links:
+                            # Определяем тип ссылки и добавляем эмодзи
+                            if "drive.google.com/uc?id=" in link:
+                                f.write(f"📥 {link}\n")
+                            elif "drive.google.com/file/d/" in link:
+                                f.write(f"👁️ {link}\n")
+                            else:
+                                f.write(f"{link}\n")
+                        
+                        f.write(f"\n✅ Все файлы готовы к использованию!")
+                        f.write(f"\n🤖 Прямые ссылки совместимы с ботами для автоматического скачивания")
+                        links_file_path = f.name
                     
-                    f.write("💡 ИНФОРМАЦИЯ О ССЫЛКАХ:\n")
-                    f.write("• Прямые ссылки (📥) - для автоматического скачивания ботами\n")
-                    f.write("• Ссылки просмотра (👁️) - для открытия в браузере\n\n")
-                    
-                    for link in drive_links:
-                        # Определяем тип ссылки и добавляем эмодзи
-                        if "drive.google.com/uc?id=" in link:
-                            f.write(f"📥 {link}\n")
-                        elif "drive.google.com/file/d/" in link:
-                            f.write(f"👁️ {link}\n")
-                        else:
-                            f.write(f"{link}\n")
-                    
-                    f.write(f"\n✅ Все файлы готовы к использованию!")
-                    f.write(f"\n🤖 Прямые ссылки совместимы с ботами для автоматического скачивания")
-                    links_file_path = f.name
+                    logger.info(f"Links file created successfully at: {links_file_path}")
+                except Exception as e:
+                    logger.error(f"Failed to create links file: {e}")
+            else:
+                logger.warning(f"No drive links found for task {task_id}, file will not be created")
             
             text = f"""
 ✅ <b>Обработка завершена!</b>
@@ -997,32 +1024,51 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
             
             try:
                 # Send main notification
+                logger.info(f"Sending main notification to user {user_id}")
                 await bot.send_message(
                     chat_id=user_id,
                     text=text,
                     reply_markup=get_back_keyboard("main_menu"),
                     parse_mode="HTML"
                 )
+                logger.info(f"Main notification sent successfully to user {user_id}")
                 
                 # Send links file if available
                 if links_file_path and drive_links:
-                    document = FSInputFile(links_file_path, filename=f"video_links_{task_id[:8]}.txt")
-                    await bot.send_document(
-                        chat_id=user_id,
-                        document=document,
-                        caption="📎 Файл со ссылками на все фрагменты"
-                    )
+                    logger.info(f"Sending links file to user {user_id}: {links_file_path}")
+                    try:
+                        document = FSInputFile(links_file_path, filename=f"video_links_{task_id[:8]}.txt")
+                        await bot.send_document(
+                            chat_id=user_id,
+                            document=document,
+                            caption="📎 Файл со ссылками на все фрагменты"
+                        )
+                        logger.info(f"Links file sent successfully to user {user_id}")
+                    except Exception as doc_error:
+                        logger.error(f"Failed to send links file to user {user_id}: {doc_error}")
                     
                     # Clean up temp file
-                    import os
-                    os.unlink(links_file_path)
+                    try:
+                        import os
+                        os.unlink(links_file_path)
+                        logger.info(f"Cleaned up temp file: {links_file_path}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to cleanup temp file {links_file_path}: {cleanup_error}")
+                else:
+                    if not links_file_path:
+                        logger.warning(f"No links file to send to user {user_id}")
+                    if not drive_links:
+                        logger.warning(f"No drive links to send to user {user_id}")
                 
                 logger.info(f"Completion notification sent to user {user_id}")
             except Exception as e:
                 logger.error(f"Failed to send notification to user {user_id}: {e}")
                 if links_file_path:
-                    import os
-                    os.unlink(links_file_path)
+                    try:
+                        import os
+                        os.unlink(links_file_path)
+                    except:
+                        pass
             finally:
                 await bot.session.close()
         
