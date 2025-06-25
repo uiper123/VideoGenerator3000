@@ -215,6 +215,10 @@ class AppSettings(BaseSettings):
     # Google API settings
     google_credentials_path: str = "google-credentials.json"
     google_spreadsheet_id: Optional[str] = Field(default=None, env="GOOGLE_SPREADSHEET_ID")
+    
+    # OAuth 2.0 settings for personal Google Drive
+    google_oauth_client_id: Optional[str] = Field(default=None, env="GOOGLE_OAUTH_CLIENT_ID")
+    google_oauth_client_secret: Optional[str] = Field(default=None, env="GOOGLE_OAUTH_CLIENT_SECRET")
 
     # YouTube Download
     youtube_cookies_file_path: Optional[str] = Field(None, env="YOUTUBE_COOKIES_FILE_PATH")

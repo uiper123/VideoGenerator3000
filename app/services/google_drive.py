@@ -1,5 +1,6 @@
 """
 Google Drive service for uploading processed videos.
+Supports both Service Account and OAuth 2.0 authentication.
 """
 import os
 import json
@@ -7,8 +8,12 @@ import base64
 import logging
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+import pickle
 
 from google.oauth2 import service_account
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
@@ -22,13 +27,88 @@ SCOPES = ['https://www.googleapis.com/auth/drive']
 # Target folder ID for all processed videos
 TARGET_FOLDER_ID = "1q3DdrbnGRSAKL6Omiy6t0MghP4ZGtiTn"
 
-def get_google_credentials() -> Optional[service_account.Credentials]:
+def get_google_credentials() -> Optional[Any]:
     """
-    Get Google credentials from Base64 env var or from a file.
+    Get Google credentials - tries OAuth first, then Service Account.
     
-    Tries to load credentials from the GOOGLE_CREDENTIALS_BASE64 
-    environment variable first. If not found, falls back to the
-    google-credentials.json file.
+    Priority:
+    1. OAuth 2.0 credentials (stored tokens)
+    2. Service Account from Base64 env var
+    3. Service Account from file
+    
+    Returns:
+        Credentials object if found, else None.
+    """
+    # Try OAuth credentials first
+    oauth_creds = get_oauth_credentials()
+    if oauth_creds:
+        return oauth_creds
+    
+    # Fallback to service account
+    return get_service_account_credentials()
+
+def get_oauth_credentials() -> Optional[Credentials]:
+    """
+    Get OAuth 2.0 credentials from stored token or environment variable.
+    
+    Returns:
+        google.oauth2.credentials.Credentials if found and valid, else None.
+    """
+    creds = None
+    
+    # Try to load from Base64 environment variable first
+    token_base64 = os.getenv("GOOGLE_OAUTH_TOKEN_BASE64")
+    if token_base64:
+        try:
+            token_data = base64.b64decode(token_base64)
+            creds = pickle.loads(token_data)
+            logger.info("Loaded OAuth credentials from Base64 environment variable")
+        except Exception as e:
+            logger.error(f"Failed to load OAuth token from Base64: {e}")
+    
+    # Fallback to local file
+    if not creds:
+        token_path = "token.pickle"
+        if os.path.exists(token_path):
+            try:
+                with open(token_path, 'rb') as token:
+                    creds = pickle.load(token)
+                    logger.info("Loaded existing OAuth credentials from token.pickle")
+            except Exception as e:
+                logger.error(f"Failed to load OAuth token: {e}")
+                return None
+    
+    # Check if credentials are valid
+    if creds and creds.valid:
+        return creds
+    
+    # Try to refresh if we have refresh token
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            
+            # Save refreshed credentials
+            if token_base64:
+                # If loaded from environment variable, log that we can't auto-update
+                logger.info("Refreshed OAuth credentials (loaded from env var - manual update may be needed)")
+            else:
+                # Save to local file
+                token_path = "token.pickle"
+                with open(token_path, 'wb') as token:
+                    pickle.dump(creds, token)
+                logger.info("Refreshed OAuth credentials and saved to file")
+            
+            return creds
+        except Exception as e:
+            logger.error(f"Failed to refresh OAuth token: {e}")
+            return None
+    
+    logger.info("No valid OAuth credentials found")
+    return None
+
+def get_service_account_credentials() -> Optional[service_account.Credentials]:
+    """
+    Get Service Account credentials from Base64 env var or from a file.
     
     Returns:
         google.oauth2.service_account.Credentials if found, else None.
@@ -37,27 +117,102 @@ def get_google_credentials() -> Optional[service_account.Credentials]:
     
     if creds_json_str:
         try:
-            logger.info("Loading Google credentials from Base64 environment variable.")
+            logger.info("Loading Google Service Account credentials from Base64 environment variable.")
             creds_json = base64.b64decode(creds_json_str).decode('utf-8')
             creds_info = json.loads(creds_json)
             credentials = service_account.Credentials.from_service_account_info(creds_info, scopes=SCOPES)
             return credentials
         except Exception as e:
-            logger.error(f"Failed to load credentials from Base64 string: {e}")
+            logger.error(f"Failed to load service account credentials from Base64 string: {e}")
             return None
     
     # Fallback to file
     creds_path = settings.google_credentials_path
     if os.path.exists(creds_path):
         try:
-            logger.info(f"Loading Google credentials from file: {creds_path}")
+            logger.info(f"Loading Google Service Account credentials from file: {creds_path}")
             credentials = service_account.Credentials.from_service_account_file(creds_path, scopes=SCOPES)
             return credentials
         except Exception as e:
-            logger.error(f"Failed to load credentials from file {creds_path}: {e}")
+            logger.error(f"Failed to load service account credentials from file {creds_path}: {e}")
             return None
             
     return None
+
+def create_oauth_flow() -> Flow:
+    """
+    Create OAuth 2.0 flow for user authentication.
+    
+    Returns:
+        Google OAuth Flow object
+    """
+    # You'll need to set these in environment variables
+    client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        raise ValueError("GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET must be set for OAuth authentication")
+    
+    client_config = {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": ["http://localhost:8080/callback"]
+        }
+    }
+    
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=SCOPES
+    )
+    flow.redirect_uri = "http://localhost:8080/callback"
+    
+    return flow
+
+def get_oauth_authorization_url() -> str:
+    """
+    Get OAuth authorization URL for user authentication.
+    
+    Returns:
+        Authorization URL string
+    """
+    try:
+        flow = create_oauth_flow()
+        auth_url, _ = flow.authorization_url(prompt='consent')
+        logger.info("Generated OAuth authorization URL")
+        return auth_url
+    except Exception as e:
+        logger.error(f"Failed to create OAuth authorization URL: {e}")
+        return ""
+
+def handle_oauth_callback(authorization_code: str) -> bool:
+    """
+    Handle OAuth callback and save credentials.
+    
+    Args:
+        authorization_code: The authorization code from the callback
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        flow = create_oauth_flow()
+        flow.fetch_token(code=authorization_code)
+        
+        creds = flow.credentials
+        
+        # Save credentials
+        with open("token.pickle", 'wb') as token:
+            pickle.dump(creds, token)
+        
+        logger.info("Successfully saved OAuth credentials")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to handle OAuth callback: {e}")
+        return False
 
 class GoogleDriveService:
     """Service for uploading files to Google Drive."""
@@ -65,15 +220,42 @@ class GoogleDriveService:
     def __init__(self):
         """Initialize Google Drive service."""
         self.credentials = get_google_credentials()
+        self.auth_type = "none"
         
         if self.credentials:
+            # Determine authentication type
+            if isinstance(self.credentials, service_account.Credentials):
+                self.auth_type = "service_account"
+                logger.info("Using Service Account authentication")
+            else:
+                self.auth_type = "oauth"
+                logger.info("Using OAuth 2.0 authentication")
+            
             try:
                 self.service = build('drive', 'v3', credentials=self.credentials)
                 logger.info("Google Drive service initialized successfully.")
             except HttpError as e:
                 logger.error(f"Failed to build Google Drive service: {e}")
+                self.service = None
         else:
             logger.warning("Google Drive credentials not found, using mock service")
+            self.service = None
+    
+    def is_oauth_authenticated(self) -> bool:
+        """Check if OAuth authentication is active."""
+        return self.auth_type == "oauth"
+    
+    def is_service_account_authenticated(self) -> bool:
+        """Check if Service Account authentication is active."""
+        return self.auth_type == "service_account"
+    
+    def get_authentication_info(self) -> Dict[str, Any]:
+        """Get information about current authentication."""
+        return {
+            "authenticated": self.service is not None,
+            "auth_type": self.auth_type,
+            "oauth_url": get_oauth_authorization_url() if self.auth_type == "none" else None
+        }
     
     def _execute_request(self, request):
         """Execute a Google API request with error handling."""
@@ -369,7 +551,7 @@ class GoogleDriveService:
             }
     
     def upload_multiple_files(self, file_paths: List[str], task_id: str = None) -> List[Dict[str, Any]]:
-        """Upload multiple files to the target folder (no longer creates new folders)."""
+        """Upload multiple files to the target folder (or user's Drive root for OAuth)."""
         if not self.service:
             results = []
             for file_path in file_paths:
@@ -380,27 +562,36 @@ class GoogleDriveService:
                     "file_name": os.path.basename(file_path),
                     "file_id": result.get('id'),
                     "file_url": result.get('webViewLink'),
-                    "direct_url": result.get('directLink'),  # Прямая ссылка для скачивания
+                    "direct_url": result.get('directLink'),
                     "size_bytes": result.get('size', 0),
                     "public": True
                 })
             return results
 
-        # Verify access to target folder before uploading
-        folder_access = self.verify_target_folder_access()
-        if not folder_access.get('accessible'):
-            error_msg = f"Cannot access target folder {TARGET_FOLDER_ID}: {folder_access.get('error', 'Unknown error')}"
-            logger.error(error_msg)
-            return [{
-                "success": False,
-                "file_path": file_path,
-                "error": error_msg
-            } for file_path in file_paths]
+        # For OAuth, create a folder in user's Drive; for Service Account, use target folder
+        if self.is_oauth_authenticated():
+            # Create a folder for this task in user's Drive
+            folder_name = f"VideoSlicerBot_{task_id or 'unknown'}"
+            folder = self.create_folder(folder_name)
+            target_folder_id = folder.get('id') if folder else None
+            folder_name_display = folder.get('name', 'User Drive Root')
+            logger.info(f"Created folder '{folder_name_display}' in user's Drive for task {task_id or 'unknown'}")
+        else:
+            # Service Account: verify access to target folder
+            folder_access = self.verify_target_folder_access()
+            if not folder_access.get('accessible'):
+                error_msg = f"Cannot access target folder {TARGET_FOLDER_ID}: {folder_access.get('error', 'Unknown error')}"
+                logger.error(error_msg)
+                return [{
+                    "success": False,
+                    "file_path": file_path,
+                    "error": error_msg
+                } for file_path in file_paths]
+            
+            target_folder_id = TARGET_FOLDER_ID
+            folder_name_display = folder_access.get('folder_name', 'Target Folder')
 
-        # Use the target folder directly instead of creating new folders
-        target_folder_id = TARGET_FOLDER_ID
-        folder_name = folder_access.get('folder_name', 'Target Folder')
-        logger.info(f"Uploading {len(file_paths)} files to '{folder_name}' (ID: {target_folder_id}) for task {task_id or 'unknown'}")
+        logger.info(f"Uploading {len(file_paths)} files to '{folder_name_display}' (ID: {target_folder_id}) for task {task_id or 'unknown'}")
 
         upload_results = []
         for file_path in file_paths:
@@ -420,8 +611,8 @@ class GoogleDriveService:
                     "file_path": file_path,
                     "file_name": result.get('name'),
                     "file_id": result.get('id'),
-                    "file_url": result.get('webViewLink'),  # Ссылка для просмотра
-                    "direct_url": result.get('directLink'),  # Прямая ссылка для скачивания
+                    "file_url": result.get('webViewLink'),
+                    "direct_url": result.get('directLink'),
                     "size_bytes": int(result.get('size', 0)),
                     "public": result.get('public', False)
                 })
@@ -438,6 +629,7 @@ class GoogleDriveService:
         successful_uploads = [r for r in upload_results if r.get("success")]
         failed_uploads = [r for r in upload_results if not r.get("success")]
         
-        logger.info(f"Upload summary to '{folder_name}': {len(successful_uploads)} successful, {len(failed_uploads)} failed (saves space by not creating individual task folders)")
+        auth_info = " (OAuth - User's Drive)" if self.is_oauth_authenticated() else " (Service Account)"
+        logger.info(f"Upload summary to '{folder_name_display}'{auth_info}: {len(successful_uploads)} successful, {len(failed_uploads)} failed")
 
         return upload_results 

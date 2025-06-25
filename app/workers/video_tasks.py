@@ -952,7 +952,7 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                             drive_links.append(f"  └ Просмотр: {view_url}")
         
         async def send_notification():
-            bot = Bot(token=settings.telegram_bot_token)
+            bot = Bot(token=settings.telegram_bot_token.get_secret_value())
             
             # Create links file if we have drive links
             links_file_path = None
