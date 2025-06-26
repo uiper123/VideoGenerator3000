@@ -119,7 +119,10 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
         with get_sync_db_session() as session:
             task = session.get(VideoTaskModel, task_id)
             if task:
-                task.metadata = {
+                # Update video_metadata (not metadata)
+                if task.video_metadata is None:
+                    task.video_metadata = {}
+                task.video_metadata.update({
                     "title": download_result["title"],
                     "duration": download_result["duration"],
                     "size_bytes": download_result["file_size"],
@@ -129,7 +132,7 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
                     "thumbnail": download_result.get("thumbnail"),
                     "description": download_result.get("description", ""),
                     "uploader": download_result.get("author", "")
-                }
+                })
                 task.progress = 100
                 session.commit()
         
@@ -525,7 +528,10 @@ def process_uploaded_file_chain(self, task_id: str, file_id: str, file_name: str
             if task:
                 task.status = VideoStatus.COMPLETED
                 task.progress = 100
-                task.metadata.update({
+                # Update video_metadata (not metadata)
+                if task.video_metadata is None:
+                    task.video_metadata = {}
+                task.video_metadata.update({
                     'fragments_count': len(fragments),
                     'successful_uploads': len(successful_uploads),
                     'sheet_url': sheet_result.get('sheet_url', ''),
