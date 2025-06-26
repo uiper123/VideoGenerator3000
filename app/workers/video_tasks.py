@@ -1252,6 +1252,21 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
             fragments = session.query(VideoFragment).filter_by(task_id=task_id).all()
             actual_fragments_count = len(fragments)
             
+            # Calculate total duration and size for short video detection
+            total_duration = sum(float(f.duration or 0) for f in fragments)
+            total_size_mb = sum((f.size_bytes or 0) for f in fragments) / (1024 * 1024)
+            logger.info(f"Task {task_id}: {actual_fragments_count} fragments, {total_duration:.1f}s total, {total_size_mb:.1f}MB")
+            
+            # Check if we should send videos directly to chat
+            should_send_files = (
+                actual_fragments_count <= 3 and 
+                total_duration <= 20 and  # 20 seconds total
+                total_size_mb <= 40 and   # 40MB total (Telegram limit is 50MB)
+                all(os.path.exists(f.local_path) for f in fragments if f.local_path)
+            )
+            
+            logger.info(f"Short video check for task {task_id}: send_files={should_send_files}")
+            
             # Get drive links
             drive_links = []
             logger.info(f"Processing {len(fragments)} fragments for task {task_id}")
@@ -1331,6 +1346,7 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
 
 📋 ID задачи: <code>{task_id}</code>
 📊 Создано фрагментов: {actual_fragments_count}
+⏱️ Общая длительность: {total_duration:.1f} сек
 
 <b>Результаты:</b>
 • {actual_fragments_count} фрагментов в формате 9:16
@@ -1338,7 +1354,8 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
 • Готово к использованию
 • 🤖 Прямые ссылки для ботов (общедоступные)
 
-{f"📁 Файлы загружены на Google Drive с публичным доступом" if drive_links else "📁 Файлы сохранены на сервере"}
+{f"📱 Короткие видео отправлены прямо в чат!" if should_send_files else "📁 Файлы загружены на Google Drive с публичным доступом"}
+{f"📁 + дополнительно ссылки на Google Drive" if should_send_files and drive_links else ""}
             """
             
             try:
@@ -1378,6 +1395,63 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                         logger.warning(f"No links file to send to user {user_id}")
                     if not drive_links:
                         logger.warning(f"No drive links to send to user {user_id}")
+                
+                # Send short videos directly to chat if applicable
+                if should_send_files:
+                    logger.info(f"Sending {actual_fragments_count} short video files directly to user {user_id}")
+                    files_sent = 0
+                    
+                    for fragment in fragments:
+                        if fragment.local_path and os.path.exists(fragment.local_path):
+                            try:
+                                # Prepare video file for sending
+                                video_file = FSInputFile(
+                                    fragment.local_path, 
+                                    filename=f"shorts_{fragment.fragment_number}_{task_id[:8]}.mp4"
+                                )
+                                
+                                # Create caption with fragment info
+                                duration_text = f"{fragment.duration:.1f}s" if fragment.duration else "~"
+                                size_text = f"{(fragment.size_bytes / (1024*1024)):.1f}MB" if fragment.size_bytes else "~"
+                                
+                                caption = f"🎬 Фрагмент {fragment.fragment_number}/{actual_fragments_count}\n"
+                                caption += f"⏱️ Длительность: {duration_text}\n"
+                                caption += f"📊 Размер: {size_text}\n"
+                                caption += f"🎯 Готов к публикации в Shorts!"
+                                
+                                # Send video file
+                                await bot.send_video(
+                                    chat_id=user_id,
+                                    video=video_file,
+                                    caption=caption,
+                                    supports_streaming=True,
+                                    width=1080,  # Shorts width
+                                    height=1920  # Shorts height
+                                )
+                                
+                                files_sent += 1
+                                logger.info(f"Sent video file {fragment.fragment_number} to user {user_id}")
+                                
+                            except Exception as video_error:
+                                logger.error(f"Failed to send video file {fragment.fragment_number} to user {user_id}: {video_error}")
+                    
+                    if files_sent > 0:
+                        # Send summary message
+                        summary_text = f"📱 <b>Готово!</b>\n\n"
+                        summary_text += f"Отправлено {files_sent} видео прямо в чат.\n"
+                        summary_text += f"Также доступны ссылки на Google Drive выше.\n\n"
+                        summary_text += f"💡 <i>Короткие видео (до 20 сек) отправляются прямо в чат для удобства!</i>"
+                        
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text=summary_text,
+                            parse_mode="HTML"
+                        )
+                        logger.info(f"Sent summary message to user {user_id} for {files_sent} files")
+                    else:
+                        logger.warning(f"No video files were sent to user {user_id} despite should_send_files=True")
+                else:
+                    logger.info(f"Video files not sent to user {user_id} - criteria not met (should_send_files=False)")
                 
                 logger.info(f"Completion notification sent to user {user_id}")
             except Exception as e:
