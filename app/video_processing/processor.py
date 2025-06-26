@@ -479,9 +479,7 @@ class VideoProcessor:
             
             title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={font_size}:fontcolor={style['color']}:bordercolor={style['border_color']}:borderw={style['border_width']}:x=(w-text_w)/2:y={y_position}"
             filters.append(f"[with_main]{title_filter}[output]")
-        else:
-            # If no title, rename the final output
-            filters.append("[with_main]null[output]")
+        # Note: If no title, the final output is [with_main], not [output]
         
         # Note: Fade effects removed due to FFmpeg compatibility issues
         # Can be added later with proper syntax: fade=in:0:30,fade=out:st=duration-30:d=30
@@ -1223,12 +1221,15 @@ class VideoProcessor:
             # Build video filter for title and layout
             video_filter = self._build_video_filters(output_width, output_height, title, font_path, custom_title_style)
             
+            # Determine output stream name based on whether title is present
+            output_stream = '[output]' if title else '[with_main]'
+            
             # First pass: Create video with title and proper layout
             cmd = [
                 'ffmpeg',
                 '-i', video_path,
                 '-filter_complex', video_filter,
-                '-map', '[output]',  # Map processed video
+                '-map', output_stream,  # Map processed video
                 '-map', '0:a?',  # Map original audio if exists
                 '-c:v', 'libx264',
                 '-preset', 'medium',
@@ -1481,20 +1482,25 @@ class VideoProcessor:
             video_filters.append(f"{current_stream}{subtitle_filter}[output]")
             current_stream = "[output]"
 
-        # Final output mapping
-        final_filter_graph = ";".join(video_filters)
+        # Final output mapping - determine the correct output stream
         if current_stream == "[layout]":
-            final_filter_graph += "[output]" # No title or subs
+            # No title or subs - use layout stream directly
+            output_stream_name = "[layout]"
         elif current_stream == "[titled]":
-             # Connect the titled stream to the output if no subtitles
-            final_filter_graph += ";[titled]copy[output]"
+            # Has title but no subs - use titled stream directly  
+            output_stream_name = "[titled]"
+        else:
+            # Has subtitles - use output stream
+            output_stream_name = "[output]"
+        
+        final_filter_graph = ";".join(video_filters)
 
         # --- FFmpeg Command Execution ---
         cmd = [
             'ffmpeg',
             '-i', video_path,
             '-filter_complex', final_filter_graph,
-            '-map', '[output]',
+            '-map', output_stream_name,
             '-map', '0:a?',
             '-c:v', 'libx264',
             '-preset', 'veryfast',
