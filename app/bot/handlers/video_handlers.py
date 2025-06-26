@@ -131,14 +131,33 @@ async def start_file_upload(callback: CallbackQuery, state: FSMContext) -> None:
 • WMV, FLV, WebM, M4V
 
 <b>Ограничения:</b>
-• Максимальный размер: 2GB
+• Максимальный размер: 50MB
 • Максимальная длительность: 3 часа
 
+<i>Для больших файлов используйте ссылку на видео</i>
 <i>Просто отправьте файл следующим сообщением</i>
     """
     
     await callback.message.edit_text(
         text,
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+@router.message(VideoProcessingStates.waiting_for_file, ~(F.video | F.document))
+async def process_invalid_file_input(message: Message, state: FSMContext) -> None:
+    """
+    Handle invalid input when waiting for file upload.
+    
+    Args:
+        message: User message
+        state: FSM context
+    """
+    await message.answer(
+        "❌ <b>Неподдерживаемый тип сообщения</b>\n\n"
+        "Пожалуйста, отправьте видео файл или документ.\n\n"
+        "<i>Поддерживаемые форматы: MP4, AVI, MKV, MOV, WMV, FLV, WebM, M4V</i>",
         reply_markup=get_cancel_keyboard(),
         parse_mode="HTML"
     )
@@ -161,6 +180,21 @@ async def process_file_upload(message: Message, state: FSMContext, bot: Bot) -> 
     elif message.document:
         file_info = message.document
         file_name = message.document.file_name or f"document_{message.document.file_unique_id}"
+        
+        # Check if document is a video file
+        if file_name:
+            valid_extensions = ('.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v')
+            if not file_name.lower().endswith(valid_extensions):
+                await message.answer(
+                    "❌ <b>Неподдерживаемый формат файла</b>\n\n"
+                    f"Файл: {file_name}\n\n"
+                    "Поддерживаемые форматы:\n"
+                    "• MP4, AVI, MKV, MOV\n"
+                    "• WMV, FLV, WebM, M4V",
+                    reply_markup=get_cancel_keyboard(),
+                    parse_mode="HTML"
+                )
+                return
     else:
         await message.answer(
             "❌ Неподдерживаемый тип файла",
@@ -171,7 +205,10 @@ async def process_file_upload(message: Message, state: FSMContext, bot: Bot) -> 
     # Check file size (Telegram limit is usually 50MB for bots)
     if file_info.file_size and file_info.file_size > 50 * 1024 * 1024:
         await message.answer(
-            ERROR_MESSAGES["file_too_large"],
+            "❌ <b>Файл слишком большой</b>\n\n"
+            f"Размер файла: {file_info.file_size / (1024*1024):.1f} MB\n"
+            "Максимальный размер: 50 MB\n\n"
+            "Пожалуйста, сожмите видео или используйте ссылку на видео.",
             reply_markup=get_cancel_keyboard(),
             parse_mode="HTML"
         )
@@ -630,7 +667,11 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
                 original_filename=data.get("file_name"),
                 status=VideoStatus.PENDING,
                 settings=data.get("settings", {}),
-                metadata={}
+                video_metadata={
+                    'file_id': data.get("file_id"),
+                    'file_size': data.get("file_size"),
+                    'input_type': data.get("input_type")
+                }
             )
             session.add(video_task)
             await session.commit()
@@ -707,12 +748,43 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
             )
         else:
             # Process from uploaded file
-            # TODO: Implement file processing
-            await callback.message.edit_text(
-                "❌ <b>Обработка файлов пока не поддерживается</b>\n\nИспользуйте ссылку на видео.",
-                parse_mode="HTML"
+            settings = data.get("settings", {})
+            file_id = data.get("file_id")
+            file_name = data.get("file_name")
+            file_size = data.get("file_size")
+            
+            if not all([file_id, file_name, file_size]):
+                await callback.message.edit_text(
+                    "❌ <b>Ошибка</b>\n\nДанные файла не найдены. Попробуйте загрузить файл заново.",
+                    parse_mode="HTML"
+                )
+                return
+
+            # Получаем длительность видео для расчёта лимита времени
+            try:
+                # For uploaded files, we'll use a default timeout since we can't get duration beforehand
+                duration_sec = 600  # Default 10 minutes, will be updated after download
+            except Exception as e:
+                duration_sec = 600  # fallback
+
+            # Функция для расчёта лимита времени
+            def get_time_limit_for_video(video_duration_sec):
+                base = video_duration_sec * 5.0
+                return int(min(max(base, 3600), 43200))
+
+            soft_limit = get_time_limit_for_video(duration_sec)
+            hard_limit = soft_limit + 600  # +10 минут запас
+
+            # Передаём ffmpeg_timeout в settings
+            settings['ffmpeg_timeout'] = max(soft_limit - 60, 300)
+
+            from app.workers.video_tasks import process_uploaded_file_chain
+            
+            process_uploaded_file_chain.apply_async(
+                args=[task_id, file_id, file_name, file_size, settings],
+                soft_time_limit=soft_limit,
+                time_limit=hard_limit
             )
-            return
             
     finally:
         # --- Release the lock ---

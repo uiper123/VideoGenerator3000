@@ -23,6 +23,9 @@ SUPPORTED_SOURCES = [
     'youtube.com', 'youtu.be'
 ]
 
+# Telegram file size limits for bots
+TELEGRAM_FILE_SIZE_LIMIT = 50 * 1024 * 1024  # 50MB for bots
+
 
 class DownloadError(Exception):
     """Custom exception for download errors."""
@@ -69,6 +72,133 @@ class VideoDownloader:
         except Exception as e:
             logger.error(f"Download failed for {url}: {e}")
             raise DownloadError(f"Download failed: {e}")
+    
+    async def download_telegram_file(self, bot, file_id: str, file_name: str, file_size: int) -> Dict[str, Any]:
+        """
+        Download video file from Telegram.
+        
+        Args:
+            bot: Telegram bot instance
+            file_id: Telegram file ID
+            file_name: Original filename
+            file_size: File size in bytes
+            
+        Returns:
+            Dict with download information
+            
+        Raises:
+            DownloadError: If download fails
+        """
+        logger.info(f"Starting Telegram file download: {file_name} ({file_size} bytes)")
+        
+        try:
+            # Check file size limit
+            if file_size > TELEGRAM_FILE_SIZE_LIMIT:
+                raise DownloadError(f"File too large: {file_size} bytes (max {TELEGRAM_FILE_SIZE_LIMIT // (1024*1024)}MB)")
+            
+            # Get file info from Telegram
+            file = await bot.get_file(file_id)
+            file_path = file.file_path
+            
+            # Generate local filename
+            safe_filename = self._sanitize_filename(file_name)
+            local_path = os.path.join(self.download_dir, safe_filename)
+            
+            # Download file
+            logger.info(f"Downloading Telegram file to: {local_path}")
+            await bot.download_file(file_path, local_path)
+            
+            # Verify download
+            if not os.path.exists(local_path):
+                raise DownloadError("File download failed - file not found after download")
+            
+            actual_size = os.path.getsize(local_path)
+            if actual_size != file_size:
+                logger.warning(f"Downloaded file size mismatch: expected {file_size}, got {actual_size}")
+            
+            # Get basic video info using ffprobe
+            video_info = self._get_video_info_ffprobe(local_path)
+            
+            return {
+                'title': os.path.splitext(file_name)[0],  # Use filename without extension as title
+                'duration': video_info.get('duration', 0),
+                'url': f"telegram_file:{file_id}",
+                'local_path': local_path,
+                'file_size': actual_size,
+                'format': video_info.get('format_name', 'unknown'),
+                'resolution': f"{video_info.get('width', 0)}x{video_info.get('height', 0)}",
+                'description': f"Uploaded file: {file_name}",
+                'author': 'User Upload',
+                'views': 0,
+                'thumbnail': '',
+                'original_filename': file_name
+            }
+            
+        except Exception as e:
+            logger.error(f"Telegram file download failed: {e}")
+            raise DownloadError(f"File download failed: {e}")
+    
+    def _sanitize_filename(self, filename: str) -> str:
+        """
+        Sanitize filename for safe storage.
+        
+        Args:
+            filename: Original filename
+            
+        Returns:
+            Sanitized filename
+        """
+        import re
+        
+        # Remove or replace invalid characters
+        sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
+        
+        # Ensure we have an extension
+        if '.' not in sanitized:
+            sanitized += '.mp4'
+        
+        # Add UUID prefix to avoid conflicts
+        unique_id = str(uuid.uuid4())[:8]
+        name, ext = os.path.splitext(sanitized)
+        return f"{unique_id}_{name}{ext}"
+    
+    def _get_video_info_ffprobe(self, video_path: str) -> Dict[str, Any]:
+        """
+        Get video information using ffprobe.
+        
+        Args:
+            video_path: Path to video file
+            
+        Returns:
+            Dict with video information
+        """
+        try:
+            probe = ffmpeg.probe(video_path)
+            video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
+            
+            if not video_stream:
+                raise DownloadError("No video stream found in file")
+            
+            # Get format info
+            format_info = probe.get('format', {})
+            
+            return {
+                'duration': float(format_info.get('duration', 0)),
+                'width': int(video_stream.get('width', 0)),
+                'height': int(video_stream.get('height', 0)),
+                'format_name': format_info.get('format_name', 'unknown'),
+                'fps': eval(video_stream.get('r_frame_rate', '30/1')) if video_stream.get('r_frame_rate') else 30
+            }
+            
+        except Exception as e:
+            logger.warning(f"Failed to get video info with ffprobe: {e}")
+            return {
+                'duration': 0,
+                'width': 0,
+                'height': 0,
+                'format_name': 'unknown',
+                'fps': 30
+            }
     
     def _is_youtube_url(self, url: str) -> bool:
         """Check if URL is from YouTube."""
