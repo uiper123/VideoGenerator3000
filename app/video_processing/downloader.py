@@ -580,133 +580,128 @@ class VideoDownloader:
     
     def _try_ytdlp_download(self, url: str, quality: str, extra_args: list) -> Dict[str, Any]:
         """
-        Try downloading with specific yt-dlp arguments.
+        Try downloading using yt-dlp with additional arguments.
         
         Args:
-            url: YouTube URL
-            quality: Preferred quality  
+            url: Video URL
+            quality: Preferred quality
             extra_args: Additional yt-dlp arguments
             
         Returns:
             Dict with download information
+            
+        Raises:
+            DownloadError: If download fails
         """
-        # User-Agent для подмены
-        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-
-        # First, get video info with timeout and better error handling
-        info_cmd = [
-            'yt-dlp',
-            '--no-warnings',
-            '--dump-json',
-            '--no-playlist',
-            '--ignore-errors',
-            '--socket-timeout', '30',
-            '--user-agent', user_agent
-        ] + extra_args + [url]
+        logger.info(f"Trying yt-dlp download with extra args: {extra_args}")
         
-        logger.info("Getting video information with yt-dlp...")
+        # Create output template
+        temp_id = str(uuid.uuid4())[:8]
+        output_template = os.path.join(self.download_dir, f"{temp_id}_%(id)s.%(ext)s")
+        
+        # Base yt-dlp command
+        ytdlp_cmd = [
+            "yt-dlp",
+            "--format", f"bestvideo[height<={quality[:-1]}]+bestaudio/best[height<={quality[:-1]}]/best",
+            "--output", output_template,
+            "--merge-output-format", "mp4",
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        ]
+        
+        # Add extra arguments if provided
+        if extra_args:
+            ytdlp_cmd.extend(extra_args)
+        
+        # Add URL
+        ytdlp_cmd.append(url)
+        
+        # Read proxies from file
+        proxies = []
+        proxy_file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'validated_proxies.txt')
         try:
-            result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=90)
+            with open(proxy_file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    proxy = line.split(' (')[0].strip()
+                    if proxy:
+                        proxies.append(proxy)
+            logger.info(f"Loaded {len(proxies)} proxies from validated_proxies.txt")
+        except Exception as e:
+            logger.error(f"Failed to load proxies: {e}")
+            proxies = []
+        
+        # Try download with each proxy
+        for i, proxy in enumerate(proxies):
+            proxy_cmd = ytdlp_cmd.copy()
+            proxy_cmd.extend(["--proxy", proxy])
+            logger.info(f"Trying download with proxy {i+1}/{len(proxies)}: {proxy}")
+            
+            try:
+                # Run yt-dlp command
+                result = subprocess.run(
+                    proxy_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=600  # 10 minute timeout
+                )
+                
+                if result.returncode == 0:
+                    logger.info(f"Download successful with proxy: {proxy}")
+                    # Find the downloaded file
+                    downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
+                    if not downloaded_files:
+                        raise DownloadError("Download completed but output file not found")
+                    
+                    local_path = os.path.join(self.download_dir, downloaded_files[0])
+                    
+                    # Get video info from yt-dlp
+                    video_info = self._get_video_info_ytdlp(url, extra_args)
+                    video_info['local_path'] = local_path
+                    video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+                    return video_info
+                else:
+                    logger.warning(f"Download failed with proxy {proxy}: {result.stderr}")
+                    continue
+            except subprocess.TimeoutExpired:
+                logger.error(f"yt-dlp download timed out with proxy: {proxy}")
+                continue
+            except Exception as e:
+                logger.error(f"yt-dlp download error with proxy {proxy}: {e}")
+                continue
+        
+        # If all proxies fail, try without proxy
+        logger.info("All proxies failed, trying without proxy")
+        try:
+            result = subprocess.run(
+                ytdlp_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=600  # 10 minute timeout
+            )
+            
+            if result.returncode == 0:
+                logger.info("Download successful without proxy")
+                # Find the downloaded file
+                downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
+                if not downloaded_files:
+                    raise DownloadError("Download completed but output file not found")
+                
+                local_path = os.path.join(self.download_dir, downloaded_files[0])
+                
+                # Get video info from yt-dlp
+                video_info = self._get_video_info_ytdlp(url, extra_args)
+                video_info['local_path'] = local_path
+                video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+                return video_info
+            else:
+                raise DownloadError(f"yt-dlp download failed: {result.stderr}")
         except subprocess.TimeoutExpired:
-            raise DownloadError("yt-dlp info extraction timed out")
-        
-        if result.returncode != 0:
-            error_msg = result.stderr.strip()
-            if "Sign in to confirm you're not a bot" in error_msg:
-                raise DownloadError(f"YouTube bot detection - need authentication")
-            elif "Video unavailable" in error_msg:
-                raise DownloadError(f"Video unavailable") 
-            elif "Private video" in error_msg:
-                raise DownloadError(f"Video is private")
-            elif "removed by the uploader" in error_msg:
-                raise DownloadError(f"Video was removed by uploader")
-            raise DownloadError(f"yt-dlp info extraction failed: {error_msg}")
-        
-        try:
-            video_info = json.loads(result.stdout)
-        except json.JSONDecodeError as e:
-            raise DownloadError(f"Failed to parse video info: {e}")
-        
-        # Check video length (max 3 hours)
-        duration = video_info.get('duration', 0)
-        if duration > 10800:  # 3 hours in seconds
-            raise DownloadError(f"Video too long: {duration} seconds (max 3 hours)")
-        
-        # Set up quality format selector with better options
-        quality_formats = {
-            '4k': 'bestvideo[height<=2160]+bestaudio/best[height<=2160]',
-            '1080p': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]', 
-            '720p': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
-            'best': 'bestvideo+bestaudio/best',
-            'worst': 'worst'
-        }
-        
-        format_selector = quality_formats.get(quality, 'bestvideo[height<=1080]+bestaudio/best[height<=1080]')
-        
-        # Generate output filename
-        safe_title = "".join(c for c in video_info.get('title', 'video') if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        output_filename = f"ytdlp_{safe_title[:50]}_{uuid.uuid4().hex[:8]}.%(ext)s"
-        output_path = os.path.join(self.download_dir, output_filename)
-        
-        # Download the video with improved options
-        download_cmd = [
-            'yt-dlp',
-            '--no-warnings',
-            '--no-playlist',
-            '--format', format_selector,
-            '--output', output_path,
-            '--merge-output-format', 'mp4',
-            '--max-filesize', '2G',
-            '--retries', '5',
-            '--fragment-retries', '5',
-            '--ignore-errors',
-            '--no-check-certificate',
-            '--socket-timeout', '30',
-            '--extractor-retries', '3',
-            '--user-agent', user_agent
-        ] + extra_args + [url]
-        
-        logger.info(f"Downloading video with yt-dlp...")
-        try:
-            result = subprocess.run(download_cmd, capture_output=True, text=True, timeout=1200)  # 20 minute timeout
-        except subprocess.TimeoutExpired:
-            raise DownloadError("yt-dlp download timed out")
-        
-        if result.returncode != 0:
-            error_msg = result.stderr.strip()
-            if "Sign in to confirm you're not a bot" in error_msg:
-                raise DownloadError(f"YouTube bot detection - authentication required")
-            elif "Video unavailable" in error_msg:
-                raise DownloadError(f"Video unavailable")
-            raise DownloadError(f"yt-dlp download failed: {error_msg}")
-        
-        # Find the downloaded file
-        downloaded_files = []
-        for file in os.listdir(self.download_dir):
-            if file.startswith('ytdlp_') and file.endswith('.mp4'):
-                downloaded_files.append(os.path.join(self.download_dir, file))
-        
-        if not downloaded_files:
-            raise DownloadError("Downloaded file not found")
-        
-        # Get the most recent file (in case of multiple)
-        final_video_path = max(downloaded_files, key=os.path.getctime)
-        
-        logger.info(f"yt-dlp download completed: {final_video_path}")
-        
-        return {
-            'title': video_info.get('title', 'Unknown'),
-            'duration': duration,
-            'url': url,
-            'local_path': final_video_path,
-            'file_size': os.path.getsize(final_video_path),
-            'format': 'mp4',
-            'resolution': f"{video_info.get('height', 'unknown')}p",
-            'description': video_info.get('description', '')[:500],
-            'author': video_info.get('uploader', 'Unknown'),
-            'views': video_info.get('view_count', 0),
-            'thumbnail': video_info.get('thumbnail', '')
-        }
+            logger.error("yt-dlp download timed out without proxy")
+            raise DownloadError("Download timed out")
+        except Exception as e:
+            logger.error(f"yt-dlp download error without proxy: {e}")
+            raise DownloadError(f"yt-dlp download failed: {e}")
     
     def _select_best_stream(self, streams, quality: str):
         """
