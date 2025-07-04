@@ -590,6 +590,9 @@ class VideoDownloader:
         Returns:
             Dict with download information
         """
+        # User-Agent для подмены
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
         # First, get video info with timeout and better error handling
         info_cmd = [
             'yt-dlp',
@@ -597,7 +600,8 @@ class VideoDownloader:
             '--dump-json',
             '--no-playlist',
             '--ignore-errors',
-            '--socket-timeout', '30'
+            '--socket-timeout', '30',
+            '--user-agent', user_agent
         ] + extra_args + [url]
         
         logger.info("Getting video information with yt-dlp...")
@@ -658,7 +662,8 @@ class VideoDownloader:
             '--ignore-errors',
             '--no-check-certificate',
             '--socket-timeout', '30',
-            '--extractor-retries', '3'
+            '--extractor-retries', '3',
+            '--user-agent', user_agent
         ] + extra_args + [url]
         
         logger.info(f"Downloading video with yt-dlp...")
