@@ -37,6 +37,7 @@ class VideoProcessingStates(StatesGroup):
     configuring_settings = State()
     processing = State()
     waiting_for_title = State()
+    waiting_for_custom_duration = State()
 
 
 @router.callback_query(VideoAction.filter(F.action == "input_url"))
@@ -376,8 +377,42 @@ async def update_duration_setting(callback: CallbackQuery, callback_data: Settin
     
     # Update duration
     if callback_data.value == "custom":
-        # TODO: Implement custom duration input
-        duration = 45  # Placeholder
+        # Start custom duration input
+        text = """
+⏱️ <b>Кастомная длительность фрагментов</b>
+
+Введите желаемую длительность фрагментов в секундах.
+
+<b>Допустимые значения:</b>
+• Минимум: 5 секунд
+• Максимум: 300 секунд (5 минут)
+
+<b>Примеры:</b>
+• 25 - для фрагментов по 25 секунд
+• 45 - для фрагментов по 45 секунд
+• 90 - для фрагментов по 1.5 минуты
+
+<i>Отправьте число следующим сообщением</i>
+        """
+        
+        from app.bot.keyboards.main_menu import InlineKeyboardBuilder, MenuAction
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(
+            text="⬅️ Назад",
+            callback_data=MenuAction(action="video_menu")
+        )
+        builder.adjust(1)
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=builder.as_markup(),
+            parse_mode="HTML"
+        )
+        
+        # Set state to wait for custom duration input
+        await state.set_state(VideoProcessingStates.waiting_for_custom_duration)
+        return
     else:
         duration = int(callback_data.value)
     
@@ -535,6 +570,55 @@ async def set_title_setting(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(VideoProcessingStates.waiting_for_title)
 
 
+@router.message(VideoProcessingStates.waiting_for_custom_duration)
+async def process_custom_duration_input(message: Message, state: FSMContext) -> None:
+    """
+    Process custom duration input from user.
+    
+    Args:
+        message: User message with duration
+        state: FSM context
+    """
+    try:
+        # Parse duration
+        duration_text = message.text.strip()
+        duration = int(duration_text)
+        
+        # Validate duration
+        if duration < 5:
+            await message.answer(
+                "❌ Слишком короткая длительность. Минимум 5 секунд.",
+                reply_markup=get_cancel_keyboard()
+            )
+            return
+        elif duration > 300:
+            await message.answer(
+                "❌ Слишком длинная длительность. Максимум 300 секунд (5 минут).",
+                reply_markup=get_cancel_keyboard()
+            )
+            return
+        
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат. Введите число в секундах (например: 45).",
+            reply_markup=get_cancel_keyboard()
+        )
+        return
+    
+    # Get current state data
+    data = await state.get_data()
+    settings = data.get("settings", {})
+    
+    # Update duration
+    settings["fragment_duration"] = duration
+    await state.update_data(settings=settings)
+    await state.set_state(VideoProcessingStates.configuring_settings)
+    
+    # Show updated settings
+    source = data.get("source_url", data.get("file_name", "Unknown"))
+    await show_video_settings(message, state, source)
+
+
 @router.message(VideoProcessingStates.waiting_for_title)
 async def process_title_input(message: Message, state: FSMContext) -> None:
     """
@@ -606,46 +690,11 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
     data = await state.get_data()
     source_url = data.get("source_url")
 
-    # --- Atomic lock to prevent race conditions ---
-    lock_key = f"lock:user:{user_id}:url:{source_url}"
-    if not await redis_client.set(lock_key, "1", nx=True, ex=30): # 30-second lock
-        await callback.answer("⏳ Запрос уже обрабатывается. Пожалуйста, подождите.", show_alert=True)
-        return
-    
+    # --- Блокировка и SQL-проверка убраны ---
     try:
         async with get_db_session() as session:
-            # Check for existing active tasks for this specific URL
-            from sqlalchemy import select
-            from datetime import datetime, timedelta
-            
-            cutoff_time = datetime.utcnow() - timedelta(hours=4)
-            
-            result = await session.execute(
-                select(VideoTask).where(
-                    VideoTask.user_id == user_id,
-                    VideoTask.source_url == source_url,
-                    VideoTask.status.in_([
-                        VideoStatus.PENDING, 
-                        VideoStatus.DOWNLOADING, 
-                        VideoStatus.PROCESSING, 
-                        VideoStatus.UPLOADING
-                    ]),
-                    VideoTask.created_at > cutoff_time
-                )
-            )
-            
-            existing_task = result.scalars().first()
-            
-            if existing_task:
-                await callback.answer(
-                    f"⚠️ Для этого URL уже есть активная задача!\n"
-                    f"ID: {str(existing_task.id)[:8]}\n"
-                    f"Статус: {existing_task.status.value}",
-                    show_alert=True
-                )
-                return
-            
-            # Create video task in database
+            # --- Удалена проверка на существующую задачу ---
+            # Просто создаём новую задачу
             task_id = str(uuid.uuid4())
             
             # Get or create user
@@ -785,10 +834,9 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
                 soft_time_limit=soft_limit,
                 time_limit=hard_limit
             )
-            
+        
     finally:
-        # --- Release the lock ---
-        await redis_client.delete(lock_key)
+        pass  # --- Удалено освобождение lock_key ---
 
 
 @router.callback_query(VideoAction.filter(F.action == "my_tasks"))
