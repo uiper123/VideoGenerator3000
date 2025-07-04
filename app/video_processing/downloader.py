@@ -643,7 +643,52 @@ class VideoDownloader:
                 'http://45.147.232.43:8085',
                 'http://144.22.175.58:1080',
                 'http://103.113.71.90:3128',
-                'http://176.119.158.31:8118'
+                'http://176.119.158.31:8118',
+                'http://27.79.160.228:16000',
+                'http://27.147.152.66:58080',
+                'http://77.238.103.98:8080',
+                'http://13.212.216.15:52638',
+                'http://37.27.6.46:80',
+                'http://135.148.120.6:80',
+                'http://114.141.54.75:8080',
+                'http://43.216.148.22:37425',
+                'http://103.189.197.117:3125',
+                'http://188.42.89.66:80',
+                'http://45.159.218.235:80',
+                'http://43.216.250.248:23218',
+                'http://172.67.254.47:80',
+                'http://104.233.12.22:6573',
+                'http://72.10.164.178:24553',
+                'http://103.125.160.178:83',
+                'http://104.16.2.3:80',
+                'http://159.89.239.166:18084',
+                'http://41.191.203.161:80',
+                'http://103.165.156.11:8090',
+                'http://54.219.186.252:9909',
+                'http://37.27.253.44:8014',
+                'http://180.180.175.11:8080',
+                'http://5.78.129.53:80',
+                'http://212.175.23.51:8085',
+                'http://155.94.241.131:3128',
+                'http://8.222.17.214:1080',
+                'http://108.141.130.146:80',
+                'http://136.0.194.186:6923',
+                'http://72.10.160.173:11137',
+                'http://4.195.16.140:80',
+                'http://190.60.61.130:999',
+                'http://96.70.186.221:80',
+                'http://103.36.10.223:8080',
+                'http://185.176.26.161:80',
+                'http://66.235.200.172:80',
+                'http://163.223.78.89:8080',
+                'http://92.67.186.210:80',
+                'http://201.234.186.234:999',
+                'http://18.203.249.67:10010',
+                'http://47.239.48.114:59394',
+                'http://8.211.195.173:8443',
+                'http://103.119.67.171:8181',
+                'http://123.141.181.7:5031',
+                'http://185.238.228.122:80'
             ]
             logger.info(f"Используем резервный список из {len(proxies)} прокси")
         
@@ -671,7 +716,7 @@ class VideoDownloader:
                         raise DownloadError("Скачивание завершено, но файл не найден")
                     
                     local_path = os.path.join(self.download_dir, downloaded_files[0])
-                    
+        
                     # Получаем информацию о видео из yt-dlp
                     video_info = self._get_video_info_ytdlp(url, extra_args)
                     video_info['local_path'] = local_path
@@ -697,7 +742,7 @@ class VideoDownloader:
                 text=True,
                 timeout=600  # 10 minute timeout
             )
-            
+        
             if result.returncode == 0:
                 logger.info("Download successful without proxy")
                 # Find the downloaded file
@@ -720,7 +765,6 @@ class VideoDownloader:
         except Exception as e:
             logger.error(f"yt-dlp download error without proxy: {e}")
             raise DownloadError(f"yt-dlp download failed: {e}")
-    
     def _select_best_stream(self, streams, quality: str):
         """
         Select the best stream based on quality preference.
