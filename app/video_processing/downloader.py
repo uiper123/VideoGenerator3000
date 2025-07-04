@@ -617,7 +617,10 @@ class VideoDownloader:
         
         # Read proxies from file
         proxies = []
-        proxy_file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'validated_proxies.txt')
+        # Use a more robust path relative to the project root
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        proxy_file_path = os.path.join(base_dir, 'validated_proxies.txt')
+        logger.info(f"Attempting to load proxies from: {proxy_file_path}")
         try:
             with open(proxy_file_path, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -627,7 +630,15 @@ class VideoDownloader:
             logger.info(f"Loaded {len(proxies)} proxies from validated_proxies.txt")
         except Exception as e:
             logger.error(f"Failed to load proxies: {e}")
-            proxies = []
+            # Provide a fallback list of proxies if file not found
+            proxies = [
+                'http://47.250.159.65:9098',
+                'http://45.147.232.43:8085',
+                'http://144.22.175.58:1080',
+                'http://103.113.71.90:3128',
+                'http://176.119.158.31:8118'
+            ]
+            logger.info(f"Using fallback list of {len(proxies)} proxies")
         
         # Try download with each proxy
         for i, proxy in enumerate(proxies):
