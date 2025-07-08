@@ -3,7 +3,7 @@ Settings handlers for the Telegram bot.
 """
 import logging
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
@@ -33,6 +33,31 @@ class SettingsStates(StatesGroup):
     main = State()
     title_settings = State()
     subtitle_settings = State()
+
+
+class ProxyStates(StatesGroup):
+    input = State()
+
+
+def parse_proxy_text(text: str) -> str:
+    """
+    Парсит текст с данными прокси и возвращает строку для yt-dlp.
+    Если не удаётся — возвращает пустую строку.
+    """
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    login, password, ip, port = None, None, None, None
+    for l in lines:
+        if l.count('.') == 3 and all(part.isdigit() for part in l.split('.') if part):
+            ip = l
+        elif l.isdigit() and len(l) >= 4:
+            port = l
+        elif not login:
+            login = l
+        elif not password:
+            password = l
+    if ip and port and login and password:
+        return f"http://{login}:{password}@{ip}:{port}"
+    return ""
 
 
 @router.callback_query(SettingsAction.filter(F.action == "open_settings_menu"))
@@ -685,3 +710,32 @@ async def return_to_style_menu(callback: CallbackQuery) -> None:
         callback: Callback query
     """
     await show_style_settings(callback) 
+
+
+@router.callback_query(SettingsAction.filter(F.action == "proxy_settings"), SettingsStates.main)
+async def show_proxy_settings(callback: CallbackQuery, state: FSMContext) -> None:
+    """Показать меню настройки прокси и запросить ввод данных."""
+    await state.set_state(ProxyStates.input)
+    text = (
+        "🌐 <b>Прокси для скачивания</b>\n\n"
+        "Вставьте сюда данные прокси (можно просто скопировать из письма/кабинета):\n\n"
+        "<i>Пример:</i>\nPv4 Shared\nРоссия\nlZOy6obFDx\nGkiORLG8mS\n109.120.147.249\n55799\n24933\n20 Mbps\n11.07.2025, 9:53\nНе указан\n\n"
+        "Бот автоматически преобразует их в нужный формат.\n\n"
+        "<b>Внимание:</b> Прокси будет использоваться только для ваших загрузок!"
+    )
+    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.answer() 
+
+
+@router.message(ProxyStates.input)
+async def handle_proxy_input(message: Message, state: FSMContext) -> None:
+    """Обрабатывает ввод данных прокси, парсит и сохраняет для пользователя."""
+    user_id = message.from_user.id
+    proxy_str = parse_proxy_text(message.text)
+    if proxy_str:
+        # Сохраняем в пользовательских настройках
+        await UserSettingsService.set_user_setting(user_id, 'download_proxy', proxy_str)
+        await message.answer(f"✅ Прокси сохранён и будет использоваться для ваших загрузок!\n\n<code>{proxy_str}</code>", parse_mode="HTML")
+        await state.clear()
+    else:
+        await message.answer("❌ Не удалось распознать данные прокси. Проверьте формат и попробуйте ещё раз.") 

@@ -231,3 +231,16 @@ class UserSettingsService:
             'extra_large': '📈 Очень большой'
         }
         return size_names.get(size_value, size_value) 
+
+    @staticmethod
+    async def set_user_setting(user_id: int, key: str, value: Any) -> bool:
+        """
+        Set a custom user setting (e.g., download_proxy).
+        Args:
+            user_id: Telegram user ID
+            key: Setting key (e.g., 'download_proxy')
+            value: Value to set
+        Returns:
+            True if successful, False otherwise
+        """
+        return await UserSettingsService.update_user_setting(user_id, key, value) 

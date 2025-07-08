@@ -259,6 +259,11 @@ def get_settings_menu_keyboard() -> InlineKeyboardMarkup:
         callback_data=SettingsAction(action="notifications")
     )
     
+    # Proxy settings - NEW
+    builder.button(
+        text="🌐 Прокси для скачивания",
+        callback_data=SettingsAction(action="proxy_settings")
+    )
     # Profile settings
     builder.button(
         text="👤 Профиль",

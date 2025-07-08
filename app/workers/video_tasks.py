@@ -66,54 +66,22 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
         download_dir = f"/tmp/videos/{task_id}"
         os.makedirs(download_dir, exist_ok=True)
         
+        # Get user's individual proxy (if available)
+        user_proxy = None
+        with get_sync_db_session() as session:
+            task = session.get(VideoTaskModel, task_id)
+            if task and task.user_id:
+                user = session.get(User, task.user_id)
+                if user and user.settings and 'download_proxy' in user.settings:
+                    user_proxy = user.settings['download_proxy']
+        
         # Initialize downloader
         downloader = VideoDownloader(download_dir)
         
-        try:
-            # Download video with enhanced error handling
-            logger.info(f"Attempting to download video from {url} (attempt {self.request.retries + 1})")
-            download_result = downloader.download(url, quality)
-            logger.info(f"Download successful for task {task_id}")
-            
-        except Exception as download_error:
-            # Enhanced error handling for different types of download failures
-            error_msg = str(download_error)
-            logger.error(f"Download error for task {task_id}: {error_msg}")
-            
-            # Categorize the error for better user feedback
-            if "Sign in to confirm you're not a bot" in error_msg or "bot detection" in error_msg.lower():
-                user_friendly_error = "YouTube требует подтверждения. Попробуйте другое видео или повторите позже."
-            elif "Video unavailable" in error_msg:
-                user_friendly_error = "Видео недоступно. Проверьте ссылку или попробуйте другое видео."
-            elif "Video is private" in error_msg:
-                user_friendly_error = "Видео является приватным и недоступно для скачивания."
-            elif "removed by the uploader" in error_msg:
-                user_friendly_error = "Видео было удалено автором."
-            elif "Video too long" in error_msg:
-                user_friendly_error = "Видео слишком длинное (максимум 3 часа)."
-            elif "Video too large" in error_msg:
-                user_friendly_error = "Видео слишком большое (максимум 2GB)."
-            elif "Invalid YouTube URL" in error_msg:
-                user_friendly_error = "Некорректная ссылка на YouTube."
-            elif "timeout" in error_msg.lower():
-                user_friendly_error = "Превышено время ожидания при скачивании."
-            elif "403" in error_msg or "forbidden" in error_msg.lower():
-                user_friendly_error = "Доступ к видео ограничен."
-            elif "All download strategies failed" in error_msg:
-                user_friendly_error = "YouTube блокирует автоматическое скачивание этого видео. Попробуйте другое видео."
-            else:
-                user_friendly_error = f"Ошибка скачивания: {error_msg[:100]}"
-            
-            # Update task with user-friendly error
-            with get_sync_db_session() as session:
-                task = session.get(VideoTaskModel, task_id)
-                if task:
-                    task.status = VideoStatus.FAILED
-                    task.error_message = user_friendly_error
-                    session.commit()
-            
-            # Re-raise with original error for retry logic
-            raise download_error
+        # Download video with enhanced error handling
+        logger.info(f"Attempting to download video from {url} (attempt {self.request.retries + 1})")
+        download_result = downloader.download(url, quality, user_proxy=user_proxy)
+        logger.info(f"Download successful for task {task_id}")
         
         # Update task with metadata
         with get_sync_db_session() as session:
@@ -126,9 +94,9 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
                     "title": download_result["title"],
                     "duration": download_result["duration"],
                     "size_bytes": download_result["file_size"],
-                    "format": download_result["format"],
-                    "resolution": download_result["resolution"],
-                    "fps": 30,  # Default FPS
+                    "format": download_result.get("format", "mp4"),
+                    "resolution": download_result.get("resolution", "720p"),
+                    "fps": download_result.get("fps", 30),  # Get FPS from download result or default to 30
                     "thumbnail": download_result.get("thumbnail"),
                     "description": download_result.get("description", ""),
                     "uploader": download_result.get("author", "")
@@ -142,6 +110,33 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
     except Exception as exc:
         logger.error(f"Video download failed for task {task_id}: {exc}")
         
+        # Enhanced error handling for different types of download failures
+        error_msg = str(exc)
+        
+        # Categorize the error for better user feedback
+        if "Sign in to confirm you're not a bot" in error_msg or "bot detection" in error_msg.lower():
+            user_friendly_error = "YouTube требует подтверждения. Попробуйте другое видео или повторите позже."
+        elif "Video unavailable" in error_msg:
+            user_friendly_error = "Видео недоступно. Проверьте ссылку или попробуйте другое видео."
+        elif "Video is private" in error_msg:
+            user_friendly_error = "Видео является приватным и недоступно для скачивания."
+        elif "removed by the uploader" in error_msg:
+            user_friendly_error = "Видео было удалено автором."
+        elif "Video too long" in error_msg:
+            user_friendly_error = "Видео слишком длинное (максимум 3 часа)."
+        elif "Video too large" in error_msg:
+            user_friendly_error = "Видео слишком большое (максимум 2GB)."
+        elif "Invalid YouTube URL" in error_msg:
+            user_friendly_error = "Некорректная ссылка на YouTube."
+        elif "timeout" in error_msg.lower():
+            user_friendly_error = "Превышено время ожидания при скачивании."
+        elif "403" in error_msg or "forbidden" in error_msg.lower():
+            user_friendly_error = "Доступ к видео ограничен."
+        elif "All download strategies failed" in error_msg:
+            user_friendly_error = "YouTube блокирует автоматическое скачивание этого видео. Попробуйте другое видео."
+        else:
+            user_friendly_error = f"Ошибка скачивания: {error_msg[:100]}"
+        
         # Update task status to failed if not already updated
         try:
             with get_sync_db_session() as session:
@@ -149,7 +144,7 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
                 if task and task.status != VideoStatus.FAILED:
                     task.status = VideoStatus.FAILED
                     if not task.error_message:  # Only set if not already set above
-                        task.error_message = str(exc)[:200]  # Limit error message length
+                        task.error_message = user_friendly_error
                     session.commit()
         except Exception as db_error:
             logger.error(f"Failed to update task status: {db_error}")
@@ -165,7 +160,6 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
         
         logger.info(f"Scheduling retry {self.request.retries + 1}/{max_retries} for task {task_id} in {countdown} seconds")
         raise self.retry(exc=exc, countdown=countdown, max_retries=max_retries)
-
 
 @shared_task(base=VideoTask, bind=True)
 def process_video(self, task_id: str, local_path: str, settings_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
