@@ -567,25 +567,10 @@ class VideoDownloader:
     def _try_ytdlp_download(self, url: str, quality: str, extra_args: list) -> Dict[str, Any]:
         """
         Пробуем скачать видео с помощью yt-dlp с дополнительными аргументами.
-        
-        Аргументы:
-            url: URL видео
-            quality: Предпочитаемое качество
-            extra_args: Дополнительные аргументы для yt-dlp
-            
-        Возвращает:
-            Словарь с информацией о скачивании
-            
-        Вызывает исключение:
-            DownloadError: Если скачивание не удалось
         """
         logger.info(f"Пробуем скачать через yt-dlp с доп. аргументами: {extra_args}")
-        
-        # Создаем шаблон для имени выходного файла
         temp_id = str(uuid.uuid4())[:8]
         output_template = os.path.join(self.download_dir, f"{temp_id}_%(id)s.%(ext)s")
-        
-        # Базовая команда yt-dlp
         ytdlp_cmd = [
             "yt-dlp",
             "--format", f"bestvideo[height<={quality[:-1]}]+bestaudio/best[height<={quality[:-1]}]/best",
@@ -593,14 +578,9 @@ class VideoDownloader:
             "--merge-output-format", "mp4",
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         ]
-        
-        # Добавляем дополнительные аргументы, если они есть
         if extra_args:
             ytdlp_cmd.extend(extra_args)
-        
-        # Добавляем URL
         ytdlp_cmd.append(url)
-        
         # Если есть индивидуальный прокси пользователя — используем только его
         if self.user_proxy:
             logger.info(f"Используется индивидуальный прокси пользователя: {self.user_proxy}")
@@ -633,113 +613,35 @@ class VideoDownloader:
             except Exception as e:
                 logger.error(f"Ошибка скачивания yt-dlp с индивидуальным прокси {self.user_proxy}: {e}")
                 raise DownloadError(f"Ошибка скачивания с индивидуальным прокси: {e}")
-        # Если индивидуального прокси нет — стандартная логика
-        # Читаем прокси из файла
-        proxies = []
-        # Пробуем определить путь к файлу прокси относительно корня проекта
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-        proxy_file_path = os.path.join(base_dir, 'validated_proxies.txt')
-        logger.info(f"Пытаемся загрузить прокси из: {proxy_file_path}")
-        
-        # Проверяем, существует ли файл
-        if os.path.exists(proxy_file_path):
-            try:
-                with open(proxy_file_path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        proxy = line.split(' (')[0].strip()
-                        if proxy:
-                            proxies.append(proxy)
-                logger.info(f"Загружено {len(proxies)} прокси из validated_proxies.txt")
-            except Exception as e:
-                logger.error(f"Ошибка при загрузке прокси: {e}")
         else:
-            logger.warning(f"Файл прокси не найден по пути: {proxy_file_path}")
-        
-        # Если прокси не загружены, используем резервный список
-        if not proxies:
-            proxies = [
-                'http://47.250.159.65:9098',
-                'http://45.147.232.43:8085',
-                'http://144.22.175.58:1080',
-                'http://103.113.71.90:3128',
-                'http://176.119.158.31:8118'
-            ]
-            logger.info(f"Используем резервный список из {len(proxies)} прокси")
-        
-        # Пробуем скачать с каждым прокси
-        for i, proxy in enumerate(proxies):
-            proxy_cmd = ytdlp_cmd.copy()
-            proxy_cmd.extend(["--proxy", proxy])
-            logger.info(f"Пробуем скачать с прокси {i+1}/{len(proxies)}: {proxy}")
-            
+            # Не используем никакие прокси, только cookies (если есть)
+            logger.info("Прокси не задан, используем только cookies (если есть)")
             try:
-                # Выполняем команду yt-dlp
                 result = subprocess.run(
-                    proxy_cmd,
+                    ytdlp_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    timeout=600  # Таймаут 10 минут
+                    timeout=600
                 )
-                
                 if result.returncode == 0:
-                    logger.info(f"Успешное скачивание с прокси: {proxy}")
-                    # Находим скачанный файл
+                    logger.info("Download successful without proxy")
                     downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
                     if not downloaded_files:
-                        raise DownloadError("Скачивание завершено, но файл не найден")
-                    
+                        raise DownloadError("Download completed but output file not found")
                     local_path = os.path.join(self.download_dir, downloaded_files[0])
-        
-                    # Получаем информацию о видео из yt-dlp
                     video_info = self._get_video_info_ytdlp(url, extra_args)
                     video_info['local_path'] = local_path
                     video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
                     return video_info
                 else:
-                    logger.warning(f"Скачивание не удалось с прокси {proxy}: {result.stderr}")
-                    continue
+                    raise DownloadError(f"yt-dlp download failed: {result.stderr}")
             except subprocess.TimeoutExpired:
-                logger.error(f"Таймаут скачивания yt-dlp с прокси: {proxy}")
-                continue
+                logger.error("yt-dlp download timed out without proxy")
+                raise DownloadError("Download timed out")
             except Exception as e:
-                logger.error(f"Ошибка скачивания yt-dlp с прокси {proxy}: {e}")
-                continue
-        
-        # If all proxies fail, try without proxy
-        logger.info("All proxies failed, trying without proxy")
-        try:
-            result = subprocess.run(
-                ytdlp_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=600  # 10 minute timeout
-            )
-        
-            if result.returncode == 0:
-                logger.info("Download successful without proxy")
-                # Find the downloaded file
-                downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
-                if not downloaded_files:
-                    raise DownloadError("Download completed but output file not found")
-                
-                local_path = os.path.join(self.download_dir, downloaded_files[0])
-                
-                # Get video info from yt-dlp
-            
-                video_info = self._get_video_info_ytdlp(url, extra_args)
-                video_info['local_path'] = local_path
-                video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
-                return video_info
-            else:
-                raise DownloadError(f"yt-dlp download failed: {result.stderr}")
-        except subprocess.TimeoutExpired:
-            logger.error("yt-dlp download timed out without proxy")
-            raise DownloadError("Download timed out")
-        except Exception as e:
-            logger.error(f"yt-dlp download error without proxy: {e}")
-            raise DownloadError(f"yt-dlp download failed: {e}")
+                logger.error(f"yt-dlp download error without proxy: {e}")
+                raise DownloadError(f"yt-dlp download failed: {e}")
     
     def _select_best_stream(self, streams, quality: str):
         """
