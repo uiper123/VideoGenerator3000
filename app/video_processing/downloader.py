@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 import ffmpeg
 import uuid
 import youtube_dl
+import yt_dlp
+import tempfile
 
 from pytubefix import YouTube
 from pytubefix.exceptions import VideoUnavailable, RegexMatchError
@@ -60,7 +62,7 @@ class VideoDownloader:
         if cookies_file:
             logger.info(f"yt-dlp будет использовать cookies-файл: {cookies_file}")
             extra_args += ["--cookies", cookies_file]
-        return self._try_ytdlp_download(url, quality, extra_args=extra_args)
+        return self._try_ytdlp_download(url, quality, extra_args)
     
     async def download_telegram_file(self, bot, file_id: str, file_name: str, file_size: int) -> Dict[str, Any]:
         """
@@ -178,7 +180,7 @@ class VideoDownloader:
                 'format_name': format_info.get('format_name', 'unknown'),
                 'fps': eval(video_stream.get('r_frame_rate', '30/1')) if video_stream.get('r_frame_rate') else 30
             }
-            
+                
         except Exception as e:
             logger.warning(f"Failed to get video info with ffprobe: {e}")
             return {
@@ -569,83 +571,52 @@ class VideoDownloader:
     
     def _try_ytdlp_download(self, url: str, quality: str, extra_args: list) -> Dict[str, Any]:
         """
-        Пробуем скачать видео с помощью yt-dlp с дополнительными аргументами.
+        Скачивание через yt-dlp Python API, cookies берутся из переменной, без файловой системы.
         """
-        logger.info(f"Пробуем скачать через yt-dlp с доп. аргументами: {extra_args}")
+        logger.info(f"Пробуем скачать через yt-dlp (Python API) с доп. аргументами: {extra_args}")
         temp_id = str(uuid.uuid4())[:8]
         output_template = os.path.join(self.download_dir, f"{temp_id}_%(id)s.%(ext)s")
-        ytdlp_cmd = [
-            "yt-dlp",
-            "--format", f"bestvideo[height<={quality[:-1]}]+bestaudio/best[height<={quality[:-1]}]/best",
-            "--output", output_template,
-            "--merge-output-format", "mp4",
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        ]
-        if extra_args:
-            ytdlp_cmd.extend(extra_args)
-        ytdlp_cmd.append(url)
-        logger.info(f"[DEBUG] Итоговая команда yt-dlp: {' '.join(ytdlp_cmd)}")
-        # Если есть индивидуальный прокси пользователя — используем только его
-        if self.user_proxy:
-            logger.info(f"Используется индивидуальный прокси пользователя: {self.user_proxy}")
-            proxy_cmd = ytdlp_cmd.copy()
-            proxy_cmd.extend(["--proxy", self.user_proxy])
-            try:
-                result = subprocess.run(
-                    proxy_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=600
-                )
-                if result.returncode == 0:
-                    logger.info(f"Успешное скачивание с индивидуальным прокси: {self.user_proxy}")
-                    downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
-                    if not downloaded_files:
-                        raise DownloadError("Скачивание завершено, но файл не найден")
-                    local_path = os.path.join(self.download_dir, downloaded_files[0])
-                    video_info = self._get_video_info_ytdlp(url, extra_args)
-                    video_info['local_path'] = local_path
-                    video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
-                    return video_info
-                else:
-                    logger.warning(f"Скачивание не удалось с индивидуальным прокси: {result.stderr}")
-                    raise DownloadError(f"Скачивание не удалось с индивидуальным прокси: {result.stderr}")
-            except subprocess.TimeoutExpired:
-                logger.error(f"Таймаут скачивания yt-dlp с индивидуальным прокси: {self.user_proxy}")
-                raise DownloadError("Таймаут скачивания с индивидуальным прокси")
-            except Exception as e:
-                logger.error(f"Ошибка скачивания yt-dlp с индивидуальным прокси {self.user_proxy}: {e}")
-                raise DownloadError(f"Ошибка скачивания с индивидуальным прокси: {e}")
+        ydl_opts = {
+            'format': f"bestvideo[height<={quality[:-1]}]+bestaudio/best[height<={quality[:-1]}]/best",
+            'outtmpl': output_template,
+            'merge_output_format': 'mp4',
+            'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            'noplaylist': True,
+            'quiet': True,
+            'nocheckcertificate': True,
+            'retries': 3,
+        }
+        # Добавляем cookies из settings, если есть
+        from app.config.settings import settings
+        cookies_content = settings.youtube_cookies_content
+        if cookies_content:
+            logger.info("[DEBUG] Используем cookies из переменной, без файловой системы")
+            with tempfile.NamedTemporaryFile(mode='w+', delete=True, encoding='utf-8') as tmp:
+                tmp.write(cookies_content)
+                tmp.flush()
+                ydl_opts['cookiefile'] = tmp.name
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+                downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
+                if not downloaded_files:
+                    raise DownloadError("Скачивание завершено, но файл не найден")
+                local_path = os.path.join(self.download_dir, downloaded_files[0])
+                video_info = self._get_video_info_ytdlp(url, extra_args)
+                video_info['local_path'] = local_path
+                video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+                return video_info
         else:
-            # Не используем никакие прокси, только cookies (если есть)
-            logger.info("Прокси не задан, используем только cookies (если есть)")
-            try:
-                result = subprocess.run(
-                    ytdlp_cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=600
-                )
-                if result.returncode == 0:
-                    logger.info("Download successful without proxy")
-                    downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
-                    if not downloaded_files:
-                        raise DownloadError("Download completed but output file not found")
-                    local_path = os.path.join(self.download_dir, downloaded_files[0])
-                    video_info = self._get_video_info_ytdlp(url, extra_args)
-                    video_info['local_path'] = local_path
-                    video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
-                    return video_info
-                else:
-                    raise DownloadError(f"yt-dlp download failed: {result.stderr}")
-            except subprocess.TimeoutExpired:
-                logger.error("yt-dlp download timed out without proxy")
-                raise DownloadError("Download timed out")
-            except Exception as e:
-                logger.error(f"yt-dlp download error without proxy: {e}")
-                raise DownloadError(f"yt-dlp download failed: {e}")
+            logger.info("[DEBUG] Cookies не заданы, скачиваем без cookies")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
+            if not downloaded_files:
+                raise DownloadError("Скачивание завершено, но файл не найден")
+            local_path = os.path.join(self.download_dir, downloaded_files[0])
+            video_info = self._get_video_info_ytdlp(url, extra_args)
+            video_info['local_path'] = local_path
+            video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+            return video_info
     
     def _select_best_stream(self, streams, quality: str):
         """
