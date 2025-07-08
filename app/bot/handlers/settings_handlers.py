@@ -721,10 +721,9 @@ async def return_to_style_menu(callback: CallbackQuery) -> None:
     await show_style_settings(callback) 
 
 
-@router.callback_query(SettingsAction.filter(F.action == "proxy_settings"), SettingsStates.main)
+@router.callback_query(SettingsAction.filter(F.action == "proxy_settings"))
 async def show_proxy_settings(callback: CallbackQuery, state: FSMContext) -> None:
     logger.info(f"[DEBUG] Кнопка 'Прокси для скачивания' нажата пользователем {callback.from_user.id}")
-    """Показать меню настройки прокси и запросить ввод данных."""
     await state.set_state(ProxyStates.input)
     text = (
         "🌐 <b>Прокси для скачивания</b>\n\n"
