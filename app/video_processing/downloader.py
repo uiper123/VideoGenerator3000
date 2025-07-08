@@ -743,6 +743,7 @@ class VideoDownloader:
     def _try_youtubedl_download(self, url: str, quality: str) -> dict:
         """
         Альтернативное скачивание через youtube-dl (без прокси).
+        Теперь поддерживает cookies-файл.
         """
         logger.info("Пробуем скачать через youtube-dl (без прокси)")
         temp_id = str(uuid.uuid4())[:8]
@@ -757,6 +758,10 @@ class VideoDownloader:
             'retries': 3,
             'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         }
+        cookies_file = self._get_cookies_path()
+        if cookies_file:
+            logger.info(f"Используется cookies-файл для youtube-dl: {cookies_file}")
+            ydl_opts['cookiefile'] = cookies_file
         try:
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
@@ -764,7 +769,6 @@ class VideoDownloader:
             if not downloaded_files:
                 raise DownloadError("Скачивание через youtube-dl завершено, но файл не найден")
             local_path = os.path.join(self.download_dir, downloaded_files[0])
-            # Получаем информацию о видео через yt-dlp (или youtube-dl, если нужно)
             video_info = {
                 'local_path': local_path,
                 'file_size': os.path.getsize(local_path) if os.path.exists(local_path) else 0,
