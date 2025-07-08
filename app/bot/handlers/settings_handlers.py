@@ -756,15 +756,18 @@ async def show_proxy_settings_from_video(callback: CallbackQuery, state: FSMCont
 @router.message(ProxyStates.input)
 async def handle_proxy_input(message: Message, state: FSMContext) -> None:
     logger.info(f"[DEBUG] Пользователь {message.from_user.id} отправил данные для прокси: {message.text}")
-    """Обрабатывает ввод данных прокси, парсит и сохраняет для пользователя. После успешного ввода возвращает к настройкам видео, если нужно."""
     user_id = message.from_user.id
+    text = message.text.strip().lower()
+    if text in ("удалить", "delete", "remove", ""):
+        await UserSettingsService.set_user_setting(user_id, 'download_proxy', None)
+        await message.answer("✅ Прокси сброшен. Теперь загрузка будет идти без прокси.")
+        await state.clear()
+        return
     proxy_str = parse_proxy_text(message.text)
     data = await state.get_data()
     if proxy_str:
-        # Сохраняем в пользовательских настройках
         await UserSettingsService.set_user_setting(user_id, 'download_proxy', proxy_str)
         await message.answer(f"✅ Прокси сохранён и будет использоваться для ваших загрузок!\n\n<code>{proxy_str}</code>", parse_mode="HTML")
-        # Если нужно вернуться к настройкам видео — возвращаем
         if data.get('_return_to_video_settings'):
             await state.set_state(VideoProcessingStates.configuring_settings)
             source = data.get('source_url', data.get('file_name', ''))
