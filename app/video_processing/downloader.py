@@ -35,17 +35,19 @@ class DownloadError(Exception):
 class VideoDownloader:
     """Video downloader supporting multiple sources."""
     
-    def __init__(self, download_dir: str = "/tmp/videos"):
+    def __init__(self, download_dir: str = "/tmp/videos", user_proxy: str = None):
         """
         Initialize video downloader.
         
         Args:
             download_dir: Directory to save downloaded videos
+            user_proxy: Индивидуальный прокси пользователя (если есть)
         """
         self.download_dir = download_dir
         os.makedirs(download_dir, exist_ok=True)
+        self.user_proxy = user_proxy
     
-    def download(self, url: str, quality: str = "720p", user_proxy: str = None) -> Dict[str, Any]:
+    def download(self, url: str, quality: str = "720p") -> Dict[str, Any]:
         """
         Download video from URL.
         
@@ -615,6 +617,39 @@ class VideoDownloader:
         # Добавляем URL
         ytdlp_cmd.append(url)
         
+        # Если есть индивидуальный прокси пользователя — используем только его
+        if self.user_proxy:
+            logger.info(f"Используется индивидуальный прокси пользователя: {self.user_proxy}")
+            proxy_cmd = ytdlp_cmd.copy()
+            proxy_cmd.extend(["--proxy", self.user_proxy])
+            try:
+                result = subprocess.run(
+                    proxy_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=600
+                )
+                if result.returncode == 0:
+                    logger.info(f"Успешное скачивание с индивидуальным прокси: {self.user_proxy}")
+                    downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
+                    if not downloaded_files:
+                        raise DownloadError("Скачивание завершено, но файл не найден")
+                    local_path = os.path.join(self.download_dir, downloaded_files[0])
+                    video_info = self._get_video_info_ytdlp(url, extra_args)
+                    video_info['local_path'] = local_path
+                    video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+                    return video_info
+                else:
+                    logger.warning(f"Скачивание не удалось с индивидуальным прокси: {result.stderr}")
+                    raise DownloadError(f"Скачивание не удалось с индивидуальным прокси: {result.stderr}")
+            except subprocess.TimeoutExpired:
+                logger.error(f"Таймаут скачивания yt-dlp с индивидуальным прокси: {self.user_proxy}")
+                raise DownloadError("Таймаут скачивания с индивидуальным прокси")
+            except Exception as e:
+                logger.error(f"Ошибка скачивания yt-dlp с индивидуальным прокси {self.user_proxy}: {e}")
+                raise DownloadError(f"Ошибка скачивания с индивидуальным прокси: {e}")
+        # Если индивидуального прокси нет — стандартная логика
         # Читаем прокси из файла
         proxies = []
         # Пробуем определить путь к файлу прокси относительно корня проекта

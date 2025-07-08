@@ -803,11 +803,11 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
             file_size = data.get("file_size")
             
             if not all([file_id, file_name, file_size]):
-                await callback.message.edit_text(
+            await callback.message.edit_text(
                     "❌ <b>Ошибка</b>\n\nДанные файла не найдены. Попробуйте загрузить файл заново.",
-                    parse_mode="HTML"
-                )
-                return
+                parse_mode="HTML"
+            )
+            return
 
             # Получаем длительность видео для расчёта лимита времени
             try:
@@ -834,7 +834,7 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
                 soft_time_limit=soft_limit,
                 time_limit=hard_limit
             )
-        
+            
     finally:
         pass  # --- Удалено освобождение lock_key ---
 

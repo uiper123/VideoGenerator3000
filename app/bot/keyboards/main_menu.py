@@ -202,6 +202,11 @@ def get_video_settings_keyboard() -> InlineKeyboardMarkup:
         callback_data=SettingsValueAction(action="part_numbers", value="toggle")
     )
     
+    # Proxy settings button - NEW
+    builder.button(
+        text="🌐 Прокси для скачивания",
+        callback_data=SettingsAction(action="proxy_settings")
+    )
     # Confirm button
     builder.button(
         text="✅ Начать обработку",

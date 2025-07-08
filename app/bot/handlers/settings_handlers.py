@@ -23,6 +23,8 @@ from app.config.constants import MENU_EMOJIS
 from app.database.connection import get_db_session
 from app.database.models import User
 from app.services.user_settings import UserSettingsService, NoSettingsError
+from app.bot.handlers.video_handlers import show_video_settings
+from app.bot.handlers.video_handlers import VideoProcessingStates
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -727,15 +729,40 @@ async def show_proxy_settings(callback: CallbackQuery, state: FSMContext) -> Non
     await callback.answer() 
 
 
+@router.callback_query(SettingsAction.filter(F.action == "proxy_settings"), VideoProcessingStates.configuring_settings)
+async def show_proxy_settings_from_video(callback: CallbackQuery, state: FSMContext) -> None:
+    """Показать меню настройки прокси из окна обработки видео."""
+    await state.set_state(ProxyStates.input)
+    # Сохраняем, что нужно вернуться к настройкам видео
+    await state.update_data(_return_to_video_settings=True)
+    text = (
+        "🌐 <b>Прокси для скачивания</b>\n\n"
+        "Вставьте сюда данные прокси (можно просто скопировать из письма/кабинета):\n\n"
+        "<i>Пример:</i>\nPv4 Shared\nРоссия\nlZOy6obFDx\nGkiORLG8mS\n109.120.147.249\n55799\n24933\n20 Mbps\n11.07.2025, 9:53\nНе указан\n\n"
+        "Бот автоматически преобразует их в нужный формат.\n\n"
+        "<b>Внимание:</b> Прокси будет использоваться только для ваших загрузок!"
+    )
+    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.answer()
+
+
 @router.message(ProxyStates.input)
 async def handle_proxy_input(message: Message, state: FSMContext) -> None:
-    """Обрабатывает ввод данных прокси, парсит и сохраняет для пользователя."""
+    """Обрабатывает ввод данных прокси, парсит и сохраняет для пользователя. После успешного ввода возвращает к настройкам видео, если нужно."""
     user_id = message.from_user.id
     proxy_str = parse_proxy_text(message.text)
+    data = await state.get_data()
     if proxy_str:
         # Сохраняем в пользовательских настройках
         await UserSettingsService.set_user_setting(user_id, 'download_proxy', proxy_str)
         await message.answer(f"✅ Прокси сохранён и будет использоваться для ваших загрузок!\n\n<code>{proxy_str}</code>", parse_mode="HTML")
-        await state.clear()
+        # Если нужно вернуться к настройкам видео — возвращаем
+        if data.get('_return_to_video_settings'):
+            await state.set_state(VideoProcessingStates.configuring_settings)
+            source = data.get('source_url', data.get('file_name', ''))
+            from app.bot.handlers.video_handlers import show_video_settings
+            await show_video_settings(message, state, source)
+        else:
+            await state.clear()
     else:
         await message.answer("❌ Не удалось распознать данные прокси. Проверьте формат и попробуйте ещё раз.") 
