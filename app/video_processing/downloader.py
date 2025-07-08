@@ -50,13 +50,14 @@ class VideoDownloader:
     
     def download(self, url: str, quality: str = "720p") -> Dict[str, Any]:
         """
-        Основная точка входа для скачивания видео. Сначала пробует youtube-dl, если не удалось — yt-dlp.
+        Основная точка входа для скачивания видео. yt-dlp — основной способ, всегда использует cookies-файл, если он найден.
         """
-        try:
-            return self._try_youtubedl_download(url, quality)
-        except Exception as e:
-            logger.warning(f"youtube-dl не справился, пробуем yt-dlp: {e}")
-            return self._try_ytdlp_download(url, quality, extra_args=None)
+        extra_args = []
+        cookies_file = self._get_cookies_path()
+        if cookies_file:
+            logger.info(f"yt-dlp будет использовать cookies-файл: {cookies_file}")
+            extra_args += ["--cookies", cookies_file]
+        return self._try_ytdlp_download(url, quality, extra_args=extra_args)
     
     async def download_telegram_file(self, bot, file_id: str, file_name: str, file_size: int) -> Dict[str, Any]:
         """
@@ -740,44 +741,6 @@ class VideoDownloader:
             logger.error(f"yt-dlp download error without proxy: {e}")
             raise DownloadError(f"yt-dlp download failed: {e}")
     
-    def _try_youtubedl_download(self, url: str, quality: str) -> dict:
-        """
-        Альтернативное скачивание через youtube-dl (без прокси).
-        Теперь поддерживает cookies-файл.
-        """
-        logger.info("Пробуем скачать через youtube-dl (без прокси)")
-        temp_id = str(uuid.uuid4())[:8]
-        output_template = os.path.join(self.download_dir, f"{temp_id}_%(id)s.%(ext)s")
-        ydl_opts = {
-            'format': f"bestvideo[height<={quality[:-1]}]+bestaudio/best[height<={quality[:-1]}]/best",
-            'outtmpl': output_template,
-            'merge_output_format': 'mp4',
-            'noplaylist': True,
-            'quiet': True,
-            'nocheckcertificate': True,
-            'retries': 3,
-            'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        }
-        cookies_file = self._get_cookies_path()
-        if cookies_file:
-            logger.info(f"Используется cookies-файл для youtube-dl: {cookies_file}")
-            ydl_opts['cookiefile'] = cookies_file
-        try:
-            with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-            downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
-            if not downloaded_files:
-                raise DownloadError("Скачивание через youtube-dl завершено, но файл не найден")
-            local_path = os.path.join(self.download_dir, downloaded_files[0])
-            video_info = {
-                'local_path': local_path,
-                'file_size': os.path.getsize(local_path) if os.path.exists(local_path) else 0,
-                'downloader': 'youtube-dl',
-            }
-            return video_info
-        except Exception as e:
-            logger.error(f"Ошибка скачивания через youtube-dl: {e}")
-            raise DownloadError(f"youtube-dl download failed: {e}")
     def _select_best_stream(self, streams, quality: str):
         """
         Select the best stream based on quality preference.
