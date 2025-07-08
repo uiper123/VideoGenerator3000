@@ -45,9 +45,16 @@ def parse_proxy_text(text: str) -> str:
     """
     Парсит текст с данными прокси и возвращает строку для yt-dlp.
     Если не удаётся — возвращает пустую строку.
+    Если в тексте есть 'SOCKS' — использовать socks5://, иначе http://
     """
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     login, password, ip, port = None, None, None, None
+    protocol = "http"  # По умолчанию http
+    for l in lines:
+        if "socks" in l.lower():
+            protocol = "socks5"
+        elif "http" in l.lower():
+            protocol = "http"
     for l in lines:
         if l.count('.') == 3 and all(part.isdigit() for part in l.split('.') if part):
             ip = l
@@ -58,7 +65,7 @@ def parse_proxy_text(text: str) -> str:
         elif not password:
             password = l
     if ip and port and login and password:
-        return f"http://{login}:{password}@{ip}:{port}"
+        return f"{protocol}://{login}:{password}@{ip}:{port}"
     return ""
 
 
