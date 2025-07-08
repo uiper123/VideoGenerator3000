@@ -57,3 +57,4 @@ mypy==1.13.0
 # Added from the code block
 pytelegrambotapi==4.15.2
 tenacity==8.2.3
+youtube_dl
