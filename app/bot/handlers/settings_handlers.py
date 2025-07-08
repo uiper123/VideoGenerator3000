@@ -723,6 +723,7 @@ async def return_to_style_menu(callback: CallbackQuery) -> None:
 
 @router.callback_query(SettingsAction.filter(F.action == "proxy_settings"), SettingsStates.main)
 async def show_proxy_settings(callback: CallbackQuery, state: FSMContext) -> None:
+    logger.info(f"[DEBUG] Кнопка 'Прокси для скачивания' нажата пользователем {callback.from_user.id}")
     """Показать меню настройки прокси и запросить ввод данных."""
     await state.set_state(ProxyStates.input)
     text = (
@@ -755,6 +756,7 @@ async def show_proxy_settings_from_video(callback: CallbackQuery, state: FSMCont
 
 @router.message(ProxyStates.input)
 async def handle_proxy_input(message: Message, state: FSMContext) -> None:
+    logger.info(f"[DEBUG] Пользователь {message.from_user.id} отправил данные для прокси: {message.text}")
     """Обрабатывает ввод данных прокси, парсит и сохраняет для пользователя. После успешного ввода возвращает к настройкам видео, если нужно."""
     user_id = message.from_user.id
     proxy_str = parse_proxy_text(message.text)

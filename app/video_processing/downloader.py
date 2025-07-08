@@ -54,6 +54,9 @@ class VideoDownloader:
         """
         extra_args = []
         cookies_file = self._get_cookies_path()
+        logger.info(f"[DEBUG] Значение self.user_proxy: {self.user_proxy!r}")
+        logger.info(f"[DEBUG] Путь к cookies-файлу: {cookies_file}")
+        logger.info(f"[DEBUG] Файл cookies существует: {os.path.exists(cookies_file) if cookies_file else False}")
         if cookies_file:
             logger.info(f"yt-dlp будет использовать cookies-файл: {cookies_file}")
             extra_args += ["--cookies", cookies_file]
@@ -581,6 +584,7 @@ class VideoDownloader:
         if extra_args:
             ytdlp_cmd.extend(extra_args)
         ytdlp_cmd.append(url)
+        logger.info(f"[DEBUG] Итоговая команда yt-dlp: {' '.join(ytdlp_cmd)}")
         # Если есть индивидуальный прокси пользователя — используем только его
         if self.user_proxy:
             logger.info(f"Используется индивидуальный прокси пользователя: {self.user_proxy}")
