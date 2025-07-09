@@ -34,18 +34,18 @@ def get_google_credentials() -> Optional[Any]:
         google.oauth2.credentials.Credentials if found, else None.
     """
     creds = None
-
+    
     # Сначала пробуем загрузить из файла
-    token_path = "token.pickle"
-    if os.path.exists(token_path):
-        try:
-            with open(token_path, 'rb') as token:
-                creds = pickle.load(token)
-                logger.info("Loaded existing OAuth credentials from token.pickle")
-        except Exception as e:
-            logger.error(f"Failed to load OAuth token: {e}")
-            return None
-
+        token_path = "token.pickle"
+        if os.path.exists(token_path):
+            try:
+                with open(token_path, 'rb') as token:
+                    creds = pickle.load(token)
+                    logger.info("Loaded existing OAuth credentials from token.pickle")
+            except Exception as e:
+                logger.error(f"Failed to load OAuth token: {e}")
+                return None
+    
     # Если не получилось — пробуем из переменной окружения
     if not creds:
         token_base64 = os.getenv("GOOGLE_OAUTH_TOKEN_BASE64")
@@ -60,7 +60,7 @@ def get_google_credentials() -> Optional[Any]:
     # Check if credentials are valid
     if creds and creds.valid:
         return creds
-
+    
     # Try to refresh if we have refresh token
     if creds and creds.expired and creds.refresh_token:
         try:
@@ -76,7 +76,7 @@ def get_google_credentials() -> Optional[Any]:
         except Exception as e:
             logger.error(f"Failed to refresh OAuth token: {e}")
             return None
-
+    
     logger.info("No valid OAuth credentials found")
     return None
 

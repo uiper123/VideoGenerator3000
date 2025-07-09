@@ -1355,17 +1355,17 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                         
                         if drive_links:
                             f.write("💡 ССЫЛКИ НА GOOGLE DRIVE:\n")
-                            f.write("• Прямые ссылки (📥) - для автоматического скачивания ботами\n")
-                            f.write("• Ссылки просмотра (👁️) - для открытия в браузере\n\n")
-                            
-                            for link in drive_links:
-                                # Определяем тип ссылки и добавляем эмодзи
-                                if "drive.google.com/uc?id=" in link:
-                                    f.write(f"📥 {link}\n")
-                                elif "drive.google.com/file/d/" in link:
-                                    f.write(f"👁️ {link}\n")
-                                else:
-                                    f.write(f"{link}\n")
+                        f.write("• Прямые ссылки (📥) - для автоматического скачивания ботами\n")
+                        f.write("• Ссылки просмотра (👁️) - для открытия в браузере\n\n")
+                        
+                        for link in drive_links:
+                            # Определяем тип ссылки и добавляем эмодзи
+                            if "drive.google.com/uc?id=" in link:
+                                f.write(f"📥 {link}\n")
+                            elif "drive.google.com/file/d/" in link:
+                                f.write(f"👁️ {link}\n")
+                            else:
+                                f.write(f"{link}\n")
                         
                         if should_send_files:
                             f.write(f"\n📱 ФАЙЛЫ ОТПРАВЛЕНЫ В ЧАТ:\n")
@@ -1384,7 +1384,7 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                         
                         f.write(f"\n✅ Все файлы готовы к использованию!")
                         if drive_links:
-                            f.write(f"\n🤖 Прямые ссылки совместимы с ботами для автоматического скачивания")
+                        f.write(f"\n🤖 Прямые ссылки совместимы с ботами для автоматического скачивания")
                         links_file_path = f.name
                     
                     logger.info(f"Links file created successfully at: {links_file_path}")
