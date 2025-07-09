@@ -1377,7 +1377,6 @@ class VideoProcessor:
         
         # Get video info to calculate dimensions and duration
         video_info = self.get_video_info(video_path)
-        # ВСЕГДА 1080p если не указано другое явно
         output_width, output_height = self._get_output_resolution(settings.get("quality", "1080p"))
         
         # Define output path for the processed video
@@ -1441,18 +1440,17 @@ class VideoProcessor:
 
         current_stream = "[layout]"
 
-        # 3. Title overlay - ВСЕГДА КРАСНЫЙ ЦВЕТ
+        # 3. Title overlay - Reduced font size
         title = settings.get("title", "")
         if title:
-            # Используем только дефолтный стиль
-            title_style = DEFAULT_TEXT_STYLES['title']
+            title_style = settings.get("title_style", DEFAULT_TEXT_STYLES['title'])
             title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
             font_size = int(output_height * 0.045)  # Increased from 0.035 to 0.04 (larger title)
             y_pos = int(output_height * 0.05)  # Keep position the same
             
             # drawtext для титров
             title_filter = (
-                f"drawtext:text='{title_escaped}':fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':"
+                f"drawtext=text='{title_escaped}':fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':"
                 f"fontsize={font_size}:fontcolor={title_style['color']}:borderw={title_style.get('border_width', 3)}:"
                 f"bordercolor={title_style.get('border_color', 'black')}:x=(w-text_w)/2:y={y_pos}"
             )

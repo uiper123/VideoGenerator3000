@@ -751,27 +751,26 @@ async def process_cookies_input(message: Message, state: FSMContext) -> None:
         state: FSM context
     """
     cookies_content = message.text.strip()
-    
+
     # Validate cookies format (basic check)
     if not cookies_content.startswith("# Netscape HTTP Cookie File"):
         await message.answer(
             "❌ Неверный формат cookies. Файл должен начинаться с '# Netscape HTTP Cookie File'.",
             reply_markup=InlineKeyboardBuilder()
-            .button(text="🔙 Назад", callback_data=VideoAction(action="configure_settings"))
-            .as_markup()
-                )
-                return
-            
+                .button(text="🔙 Назад", callback_data=VideoAction(action="configure_settings"))
+                .as_markup()
+        )
+        return
+
     # Check if cookies contain YouTube domain
     if ".youtube.com" not in cookies_content:
         await message.answer(
             "⚠️ В cookies не найден домен YouTube. Убедитесь, что вы экспортировали cookies с сайта youtube.com.",
             reply_markup=InlineKeyboardBuilder()
-            .button(text="🔙 Назад", callback_data=VideoAction(action="configure_settings"))
-            .as_markup()
+                .button(text="🔙 Назад", callback_data=VideoAction(action="configure_settings"))
+                .as_markup()
         )
         return
-    
     # Get current state data
     data = await state.get_data()
     settings = data.get("settings", {})
@@ -914,18 +913,15 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
             file_size = data.get("file_size")
             
             if not all([file_id, file_name, file_size]):
-            await callback.message.edit_text(
+                await callback.message.edit_text(
                     "❌ <b>Ошибка</b>\n\nДанные файла не найдены. Попробуйте загрузить файл заново.",
-                parse_mode="HTML"
-            )
-            return
+                    parse_mode="HTML"
+                )
+                return
 
             # Получаем длительность видео для расчёта лимита времени
-            try:
-                # For uploaded files, we'll use a default timeout since we can't get duration beforehand
-                duration_sec = 600  # Default 10 minutes, will be updated after download
-            except Exception as e:
-                duration_sec = 600  # fallback
+            # For uploaded files, we'll use a default timeout since we can't get duration beforehand
+            duration_sec = 600  # Default 10 minutes, will be updated after download
 
             # Функция для расчёта лимита времени
             def get_time_limit_for_video(video_duration_sec):
