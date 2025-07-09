@@ -472,7 +472,8 @@ class VideoProcessor:
             font_size = int(height * style['size_ratio'])
             y_position = int(height * style['position_y_ratio'])
             
-            title_filter = f"drawtext:text='{title_escaped}':fontfile={fontfile}:fontsize={font_size}:fontcolor={style['color']}:bordercolor={style['border_color']}:borderw={style.get('border_width', 3)}:x=(w-text_w)/2:y={y_position}"
+            # drawtext для титров
+            title_filter = f"drawtext:text='{title_escaped}':fontfile={fontfile}:fontsize={font_size}:fontcolor={style['color']}:bordercolor={style.get('border_color', 'black')}:borderw={style.get('border_width', 3)}:x=(w-text_w)/2:y={y_position}"
             filters.append(f"[with_main]{title_filter}[output]")
         # Note: If no title, the final output is [with_main], not [output]
         
@@ -877,20 +878,21 @@ class VideoProcessor:
                     # Create animated word subtitle with custom styling
                     if subtitle_style == "modern":
                         text_color = style['color']
-                        border_color = style['border_color']
+                        border_color = style.get('border_color', 'black')
                         border_width = style.get('border_width', 3)
                     elif subtitle_style == "colorful":
                         text_color = "yellow"
-                        border_color = style['border_color']
+                        border_color = style.get('border_color', 'black')
                         border_width = style.get('border_width', 3)
                     else:  # classic
                         text_color = style['color']
-                        border_color = style['border_color']
+                        border_color = style.get('border_color', 'black')
                         border_width = max(2, style.get('border_width', 3) - 1)  # Немного тоньше для классического стиля
                     
                     # Use Troika font for subtitles
                     subtitle_font = get_subtitle_font_path()
                     
+                    # drawtext для субтитров (формирование фильтра)
                     subtitle_filter = f"drawtext=text='{word_escaped}':fontfile={subtitle_font}:fontsize={font_size}:fontcolor={text_color}:bordercolor={border_color}:borderw={border_width}:x=(w-text_w)/2:y={subtitle_y}:enable='between(t,{word_start},{word_end})'"
                     
                     subtitle_filters.append(subtitle_filter)
@@ -1446,10 +1448,11 @@ class VideoProcessor:
             font_size = int(output_height * 0.045)  # Increased from 0.035 to 0.04 (larger title)
             y_pos = int(output_height * 0.05)  # Keep position the same
             
+            # drawtext для титров
             title_filter = (
                 f"drawtext=text='{title_escaped}':fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':"
                 f"fontsize={font_size}:fontcolor={title_style['color']}:borderw={title_style.get('border_width', 3)}:"
-                f"bordercolor={title_style['border_color']}:x=(w-text_w)/2:y={y_pos}"
+                f"bordercolor={title_style.get('border_color', 'black')}:x=(w-text_w)/2:y={y_pos}"
             )
             video_filters.append(f"{current_stream}{title_filter}[titled]")
             current_stream = "[titled]"
