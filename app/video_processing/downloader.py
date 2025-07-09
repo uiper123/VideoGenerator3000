@@ -38,17 +38,19 @@ class DownloadError(Exception):
 class VideoDownloader:
     """Video downloader supporting multiple sources."""
     
-    def __init__(self, download_dir: str = "/tmp/videos", user_proxy: str = None):
+    def __init__(self, download_dir: str = "/tmp/videos", user_proxy: str = None, user_cookies: str = None):
         """
         Initialize video downloader.
         
         Args:
             download_dir: Directory to save downloaded videos
             user_proxy: Индивидуальный прокси пользователя (если есть)
+            user_cookies: Индивидуальные cookies пользователя (если есть)
         """
         self.download_dir = download_dir
         os.makedirs(download_dir, exist_ok=True)
         self.user_proxy = user_proxy
+        self.user_cookies = user_cookies
     
     def download(self, url: str, quality: str = "720p") -> Dict[str, Any]:
         """
@@ -571,7 +573,7 @@ class VideoDownloader:
     
     def _try_ytdlp_download(self, url: str, quality: str, extra_args: list) -> Dict[str, Any]:
         """
-        Скачивание через yt-dlp Python API, cookies берутся из переменной, без файловой системы.
+        Скачивание через yt-dlp Python API, cookies берутся из пользователя или переменной, без файловой системы.
         """
         logger.info(f"Пробуем скачать через yt-dlp (Python API) с доп. аргументами: {extra_args}")
         temp_id = str(uuid.uuid4())[:8]
@@ -586,37 +588,35 @@ class VideoDownloader:
             'nocheckcertificate': True,
             'retries': 3,
         }
-        # Добавляем cookies из settings, если есть
-        from app.config.settings import settings
-        cookies_content = settings.youtube_cookies_content
+        
+        # Приоритет: пользовательские cookies > глобальные cookies
+        cookies_content = self.user_cookies
+        if not cookies_content:
+            from app.config.settings import settings
+            cookies_content = settings.youtube_cookies_content
+        
         if cookies_content:
-            logger.info("[DEBUG] Используем cookies из переменной, без файловой системы")
+            logger.info("[DEBUG] Используем cookies (пользовательские или глобальные), без файловой системы")
             with tempfile.NamedTemporaryFile(mode='w+', delete=True, encoding='utf-8') as tmp:
                 tmp.write(cookies_content)
                 tmp.flush()
                 ydl_opts['cookiefile'] = tmp.name
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
-                downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
-                if not downloaded_files:
-                    raise DownloadError("Скачивание завершено, но файл не найден")
-                local_path = os.path.join(self.download_dir, downloaded_files[0])
-                video_info = self._get_video_info_ytdlp(url, extra_args)
-                video_info['local_path'] = local_path
-                video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
-                return video_info
         else:
             logger.info("[DEBUG] Cookies не заданы, скачиваем без cookies")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
-            downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
-            if not downloaded_files:
-                raise DownloadError("Скачивание завершено, но файл не найден")
-            local_path = os.path.join(self.download_dir, downloaded_files[0])
-            video_info = self._get_video_info_ytdlp(url, extra_args)
-            video_info['local_path'] = local_path
-            video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
-            return video_info
+        
+        downloaded_files = [f for f in os.listdir(self.download_dir) if f.startswith(temp_id)]
+        if not downloaded_files:
+            raise DownloadError("Скачивание завершено, но файл не найден")
+        
+        local_path = os.path.join(self.download_dir, downloaded_files[0])
+        video_info = self._get_video_info_ytdlp(url, extra_args)
+        video_info['local_path'] = local_path
+        video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+        return video_info
     
     def _select_best_stream(self, streams, quality: str):
         """

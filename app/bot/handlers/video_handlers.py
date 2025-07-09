@@ -38,6 +38,7 @@ class VideoProcessingStates(StatesGroup):
     processing = State()
     waiting_for_title = State()
     waiting_for_custom_duration = State()
+    waiting_for_cookies = State()
 
 
 @router.callback_query(VideoAction.filter(F.action == "input_url"))
@@ -250,6 +251,7 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
     title_text = settings.get('title', '')
     title_display = f'"{title_text}"' if title_text else 'Не задан'
     part_numbers_status = 'Включена' if settings.get('add_part_numbers', False) else 'Отключена'
+    cookies_status = 'Загружены' if settings.get('cookies', '') else 'Не заданы'
     
     text = f"""
 ⚙️ <b>Настройки обработки</b>
@@ -262,6 +264,7 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
 📝 Субтитры: {'Включены' if settings['enable_subtitles'] else 'Отключены'}
 📋 Заголовок: {title_display}
 🔢 Нумерация частей: {part_numbers_status}
+🍪 Cookies: {cookies_status}
 
 <b>Результат:</b>
 🎬 Профессиональные шортсы с размытым фоном
@@ -331,6 +334,13 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
         callback_data=SettingsValueAction(action="part_numbers", value="toggle")
     )
     
+    # Cookies setting with dynamic text
+    cookies_text = "🍪 Куки: ЕСТЬ" if settings.get('cookies', '') else "🍪 Добавить куки"
+    builder.button(
+        text=cookies_text,
+        callback_data=SettingsValueAction(action="cookies", value="set")
+    )
+    
     # Confirm button
     builder.button(
         text="✅ Начать обработку",
@@ -343,8 +353,8 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
         callback_data=MenuAction(action="video_menu")
     )
     
-    # Arrange buttons: 4 duration, 3 quality, 1 subtitles, 1 title, 1 part numbers, 1 confirm, 1 back
-    builder.adjust(4, 3, 1, 1, 1, 1, 1)
+    # Arrange buttons: 4 duration, 3 quality, 1 subtitles, 1 title, 1 part numbers, 1 cookies, 1 confirm, 1 back
+    builder.adjust(4, 3, 1, 1, 1, 1, 1, 1)
     
     keyboard = builder.as_markup()
     
@@ -668,6 +678,136 @@ async def set_title_value(callback: CallbackQuery, callback_data: SettingsValueA
     
     # Update title
     settings["title"] = callback_data.value
+    await state.update_data(settings=settings)
+    await state.set_state(VideoProcessingStates.configuring_settings)
+    
+    # Show updated settings
+    source = data.get("source_url", data.get("file_name", "Unknown"))
+    await show_video_settings(callback, state, source)
+
+
+@router.callback_query(SettingsValueAction.filter(F.action == "cookies"))
+async def set_cookies_setting(callback: CallbackQuery, state: FSMContext) -> None:
+    """
+    Set cookies for video download.
+    
+    Args:
+        callback: Callback query
+        state: FSM context
+    """
+    # Get current state data
+    data = await state.get_data()
+    settings = data.get("settings", {
+        "fragment_duration": 30,
+        "quality": "1080p",
+        "enable_subtitles": True,
+        "cookies": ""
+    })
+    
+    # Ensure we're in the right state
+    await state.set_state(VideoProcessingStates.configuring_settings)
+    
+    text = """
+🍪 <b>Настройка cookies для скачивания</b>
+
+Отправьте содержимое cookies файла для доступа к приватным или ограниченным видео.
+
+<b>Формат cookies:</b>
+Скопируйте содержимое файла cookies.txt в формате Netscape HTTP Cookie File.
+
+<b>Как получить cookies:</b>
+1. Откройте YouTube в браузере и авторизуйтесь
+2. Используйте расширение для экспорта cookies (например, "cookies.txt")
+3. Скопируйте содержимое файла
+
+<b>Пример начала файла:</b>
+<code># Netscape HTTP Cookie File
+.youtube.com	TRUE	/	TRUE	1234567890	SESSIONID	abc123...</code>
+
+<i>Отправьте текст cookies следующим сообщением или нажмите "Без cookies"</i>
+    """
+    
+    from app.bot.keyboards.main_menu import InlineKeyboardBuilder, SettingsValueAction, MenuAction
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="🚫 Без cookies",
+        callback_data=SettingsValueAction(action="cookies_set", value="")
+    )
+    builder.button(
+        text="⬅️ Назад",
+        callback_data=MenuAction(action="video_menu")
+    )
+    builder.adjust(1, 1)
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+    
+    # Set state to wait for cookies input
+    await state.set_state(VideoProcessingStates.waiting_for_cookies)
+
+
+@router.message(VideoProcessingStates.waiting_for_cookies)
+async def process_cookies_input(message: Message, state: FSMContext) -> None:
+    """
+    Process cookies input from user.
+    
+    Args:
+        message: User message with cookies content
+        state: FSM context
+    """
+    cookies_content = message.text.strip()
+    
+    # Validate cookies format (basic check)
+    if not cookies_content.startswith("# Netscape HTTP Cookie File"):
+        await message.answer(
+            "❌ Неверный формат cookies. Файл должен начинаться с '# Netscape HTTP Cookie File'.",
+            reply_markup=get_cancel_keyboard()
+        )
+        return
+    
+    # Check if cookies contain YouTube domain
+    if ".youtube.com" not in cookies_content:
+        await message.answer(
+            "⚠️ В cookies не найден домен YouTube. Убедитесь, что вы экспортировали cookies с сайта youtube.com.",
+            reply_markup=get_cancel_keyboard()
+        )
+        return
+    
+    # Get current state data
+    data = await state.get_data()
+    settings = data.get("settings", {})
+    
+    # Update cookies
+    settings["cookies"] = cookies_content
+    await state.update_data(settings=settings)
+    await state.set_state(VideoProcessingStates.configuring_settings)
+    
+    # Show success message and updated settings
+    await message.answer("✅ Cookies успешно добавлены!")
+    source = data.get("source_url", data.get("file_name", "Unknown"))
+    await show_video_settings(message, state, source)
+
+
+@router.callback_query(SettingsValueAction.filter(F.action == "cookies_set"))
+async def set_cookies_value(callback: CallbackQuery, callback_data: SettingsValueAction, state: FSMContext) -> None:
+    """
+    Set cookies value directly from callback.
+    
+    Args:
+        callback: Callback query
+        callback_data: Settings action data
+        state: FSM context
+    """
+    # Get current state data
+    data = await state.get_data()
+    settings = data.get("settings", {})
+    
+    # Update cookies (empty string means no cookies)
+    settings["cookies"] = callback_data.value
     await state.update_data(settings=settings)
     await state.set_state(VideoProcessingStates.configuring_settings)
     

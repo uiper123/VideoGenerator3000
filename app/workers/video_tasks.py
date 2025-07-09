@@ -38,7 +38,7 @@ def get_user_id_by_task(task_id):
         return task.user_id if task else None
 
 @shared_task(base=VideoTask, bind=True)
-def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[str, Any]:
+def download_video(self, task_id: str, url: str, quality: str = "best", settings_dict: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Download video from URL.
     
@@ -46,11 +46,15 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
         task_id: Video task ID
         url: Video URL to download
         quality: Video quality preference
+        settings_dict: Processing settings including user cookies
         
     Returns:
         Dict with download results
     """
     logger.info(f"Starting video download for task {task_id}: {url}")
+    
+    if settings_dict is None:
+        settings_dict = {}
     
     # Add delay between retries to avoid rapid requests
     if self.request.retries > 0:
@@ -83,8 +87,13 @@ def download_video(self, task_id: str, url: str, quality: str = "best") -> Dict[
                 user_proxy = user_settings.get('download_proxy')
             except Exception as e:
                 logger.warning(f"Не удалось получить индивидуальный прокси пользователя {user_id}: {e}")
-        # Initialize downloader
-        downloader = VideoDownloader(download_dir, user_proxy)
+        
+        # Get user cookies from settings
+        user_cookies = settings_dict.get('cookies', '')
+        logger.info(f"[DEBUG] User cookies present: {bool(user_cookies)}")
+        
+        # Initialize downloader with user cookies
+        downloader = VideoDownloader(download_dir, user_proxy, user_cookies)
         
         try:
             # Download video with enhanced error handling
@@ -345,7 +354,7 @@ def process_uploaded_file_chain(self, task_id: str, file_id: str, file_name: str
         
         # We need to get the bot instance - this will need to be passed or accessed differently
         # For now, we'll create a sync version of the download
-        download_result = download_telegram_file_sync(task_id, file_id, file_name, file_size)
+        download_result = download_telegram_file_sync(task_id, file_id, file_name, file_size, settings_dict)
         
         # Step 2: Split video into chunks if it's long
         logger.info(f"Step 2/7: Checking if video needs to be split for task {task_id}")
@@ -590,7 +599,7 @@ def process_uploaded_file_chain(self, task_id: str, file_id: str, file_name: str
         raise self.retry(exc=exc, countdown=countdown, max_retries=max_retries)
 
 
-def download_telegram_file_sync(task_id: str, file_id: str, file_name: str, file_size: int) -> Dict[str, Any]:
+def download_telegram_file_sync(task_id: str, file_id: str, file_name: str, file_size: int, settings_dict: Dict[str, Any] = None) -> Dict[str, Any]:
     """
     Synchronous wrapper for downloading Telegram files.
     This is needed because Celery tasks can't easily handle async operations.
@@ -599,6 +608,9 @@ def download_telegram_file_sync(task_id: str, file_id: str, file_name: str, file
     from aiogram import Bot
     from app.config.settings import settings
     
+    if settings_dict is None:
+        settings_dict = {}
+    
     async def _download():
         bot = Bot(token=settings.telegram_bot_token.get_secret_value())
         try:
@@ -606,9 +618,9 @@ def download_telegram_file_sync(task_id: str, file_id: str, file_name: str, file
             download_dir = f"/tmp/videos/{task_id}"
             os.makedirs(download_dir, exist_ok=True)
             
-            # Initialize downloader
+            # Initialize downloader (no cookies needed for Telegram files)
             from app.video_processing.downloader import VideoDownloader
-            downloader = VideoDownloader(download_dir)
+            downloader = VideoDownloader(download_dir, None, "")
             
             # Download file
             result = await downloader.download_telegram_file(bot, file_id, file_name, file_size)
@@ -661,7 +673,7 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
                 session.commit()
         
         quality = settings_dict.get("quality", "1080p")
-        download_result = download_video(task_id, url, quality)
+        download_result = download_video(task_id, url, quality, settings_dict)
         
         # Step 2: Split video into chunks if it's long (to avoid timeouts)
         logger.info(f"Step 2/7: Checking if video needs to be split for task {task_id}")
