@@ -571,6 +571,44 @@ class VideoDownloader:
             else:
                 raise DownloadError(f"PyTubeFix download failed: {e}")
     
+    def _normalize_cookies(self, cookies_content: str) -> str:
+        """
+        Normalize cookies content to ensure proper format for yt-dlp.
+        
+        Args:
+            cookies_content: Raw cookies content
+            
+        Returns:
+            Normalized cookies content
+        """
+        if not cookies_content.strip():
+            return ""
+            
+        lines = cookies_content.strip().split('\n')
+        normalized_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                normalized_lines.append(line)
+                continue
+                
+            # Split by tabs and spaces, then rebuild with proper tabs
+            parts = line.split()
+            if len(parts) >= 7:
+                # Proper cookie format: domain, flag, path, secure, expiration, name, value
+                # Join everything after the 6th element as the value (in case value contains spaces)
+                domain, flag, path, secure, expiration, name = parts[:6]
+                value = ' '.join(parts[6:]) if len(parts) > 6 else ''
+                normalized_line = '\t'.join([domain, flag, path, secure, expiration, name, value])
+                normalized_lines.append(normalized_line)
+            else:
+                # If line doesn't have enough parts, skip it
+                logger.warning(f"Skipping malformed cookie line: {line}")
+                continue
+                
+        return '\n'.join(normalized_lines)
+
     def _try_ytdlp_download(self, url: str, quality: str, extra_args: list) -> Dict[str, Any]:
         """
         Скачивание через yt-dlp Python API, cookies берутся из пользователя или переменной, без файловой системы.
@@ -596,11 +634,16 @@ class VideoDownloader:
             cookies_content = settings.youtube_cookies_content
         
         if cookies_content:
-            logger.info("[DEBUG] Используем cookies (пользовательские или глобальные), без файловой системы")
-            with tempfile.NamedTemporaryFile(mode='w+', delete=True, encoding='utf-8') as tmp:
-                tmp.write(cookies_content)
+            logger.info("[DEBUG] Используем cookies (пользовательские или глобальные), нормализуем формат")
+            normalized_cookies = self._normalize_cookies(cookies_content)
+            logger.info(f"[DEBUG] Нормализованы cookies: {len(normalized_cookies.split(chr(10)))} строк")
+            
+            with tempfile.NamedTemporaryFile(mode='w+', delete=True, encoding='utf-8', suffix='.txt') as tmp:
+                tmp.write(normalized_cookies)
                 tmp.flush()
                 ydl_opts['cookiefile'] = tmp.name
+                logger.info(f"[DEBUG] Временный файл cookies: {tmp.name}")
+                
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
         else:
