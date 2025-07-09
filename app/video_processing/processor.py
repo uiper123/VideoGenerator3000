@@ -878,15 +878,15 @@ class VideoProcessor:
                     if subtitle_style == "modern":
                         text_color = style['color']
                         border_color = style['border_color']
-                        border_width = style['border_width']
+                        border_width = style.get('border_width', 3)
                     elif subtitle_style == "colorful":
                         text_color = "yellow"
                         border_color = style['border_color']
-                        border_width = style['border_width']
+                        border_width = style.get('border_width', 3)
                     else:  # classic
                         text_color = style['color']
                         border_color = style['border_color']
-                        border_width = max(2, style['border_width'] - 1)  # Немного тоньше для классического стиля
+                        border_width = max(2, style.get('border_width', 3) - 1)  # Немного тоньше для классического стиля
                     
                     # Use Troika font for subtitles
                     subtitle_font = get_subtitle_font_path()
