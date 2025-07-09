@@ -36,15 +36,15 @@ def get_google_credentials() -> Optional[Any]:
     creds = None
     
     # Сначала пробуем загрузить из файла
-        token_path = "token.pickle"
-        if os.path.exists(token_path):
-            try:
-                with open(token_path, 'rb') as token:
-                    creds = pickle.load(token)
-                    logger.info("Loaded existing OAuth credentials from token.pickle")
-            except Exception as e:
-                logger.error(f"Failed to load OAuth token: {e}")
-                return None
+    token_path = "token.pickle"
+    if os.path.exists(token_path):
+        try:
+            with open(token_path, 'rb') as token:
+                creds = pickle.load(token)
+                logger.info("Loaded existing OAuth credentials from token.pickle")
+        except Exception as e:
+            logger.error(f"Failed to load OAuth token: {e}")
+            return None
     
     # Если не получилось — пробуем из переменной окружения
     if not creds:
