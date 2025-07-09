@@ -454,6 +454,7 @@ class VideoProcessor:
         if title:
             # Use custom style or default
             style = title_style or DEFAULT_TEXT_STYLES['title']
+            style['color'] = 'red'  # Жёстко фиксируем цвет
             
             # Use custom font if provided, otherwise use Obelix Pro font
             if font_path and os.path.exists(font_path):
@@ -1444,6 +1445,7 @@ class VideoProcessor:
         title = settings.get("title", "")
         if title:
             title_style = settings.get("title_style", DEFAULT_TEXT_STYLES['title'])
+            title_style['color'] = 'red'  # Жёстко фиксируем цвет
             title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
             font_size = int(output_height * 0.045)  # Increased from 0.035 to 0.04 (larger title)
             y_pos = int(output_height * 0.05)  # Keep position the same
