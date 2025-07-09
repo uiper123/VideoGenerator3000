@@ -698,7 +698,7 @@ class VideoProcessor:
         subtitle_style: str = "modern",
         font_path: str = None,
         has_subtitles: bool = False,
-        title_color: str = 'white',
+        title_color: str = 'red',
         title_size: str = 'medium',
         subtitle_color: str = 'white',
         subtitle_size: str = 'medium'
@@ -1169,7 +1169,7 @@ class VideoProcessor:
         quality: str = "1080p",
         title: str = "",
         subtitle_style: str = "modern",
-        title_color: str = 'white',
+        title_color: str = 'red',
         title_size: str = 'medium',
         subtitle_color: str = 'white',
         subtitle_size: str = 'medium',
