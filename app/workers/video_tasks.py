@@ -1289,10 +1289,15 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
             # Check if we should send videos directly to chat
             should_send_files = (
                 actual_fragments_count <= 3 and 
-                total_duration <= 20 and  # 20 seconds total
+                total_duration <= 90 and  # Increased from 20 to 90 seconds for Drive issues
                 total_size_mb <= 40 and   # 40MB total (Telegram limit is 50MB)
                 all(os.path.exists(f.local_path) for f in fragments if f.local_path)
             )
+            
+            # If Drive upload failed but we have local files, prioritize direct sending
+            if not drive_links and should_send_files:
+                logger.info(f"No Drive links but local files exist for task {task_id}, will send directly to chat")
+                should_send_files = True
             
             logger.info(f"Short video check for task {task_id}: send_files={should_send_files}")
             
@@ -1336,10 +1341,10 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
         async def send_notification():
             bot = Bot(token=settings.telegram_bot_token.get_secret_value())
             
-            # Create links file if we have drive links
+            # Create links file if we have drive links OR if sending files directly
             links_file_path = None
-            if drive_links:
-                logger.info(f"Creating links file with {len(drive_links)} links")
+            if drive_links or should_send_files:
+                logger.info(f"Creating links file with {len(drive_links)} drive links and {len(fragments) if should_send_files else 0} local files")
                 try:
                     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
                         f.write(f"🎬 Ссылки на обработанные видео\n")
@@ -1347,28 +1352,45 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                         f.write(f"📊 Всего фрагментов: {actual_fragments_count}\n")
                         f.write(f"📅 Дата создания: {task.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
                         
-                        f.write("💡 ИНФОРМАЦИЯ О ССЫЛКАХ:\n")
-                        f.write("• Прямые ссылки (📥) - для автоматического скачивания ботами\n")
-                        f.write("• Ссылки просмотра (👁️) - для открытия в браузере\n\n")
+                        if drive_links:
+                            f.write("💡 ССЫЛКИ НА GOOGLE DRIVE:\n")
+                            f.write("• Прямые ссылки (📥) - для автоматического скачивания ботами\n")
+                            f.write("• Ссылки просмотра (👁️) - для открытия в браузере\n\n")
+                            
+                            for link in drive_links:
+                                # Определяем тип ссылки и добавляем эмодзи
+                                if "drive.google.com/uc?id=" in link:
+                                    f.write(f"📥 {link}\n")
+                                elif "drive.google.com/file/d/" in link:
+                                    f.write(f"👁️ {link}\n")
+                                else:
+                                    f.write(f"{link}\n")
                         
-                        for link in drive_links:
-                            # Определяем тип ссылки и добавляем эмодзи
-                            if "drive.google.com/uc?id=" in link:
-                                f.write(f"📥 {link}\n")
-                            elif "drive.google.com/file/d/" in link:
-                                f.write(f"👁️ {link}\n")
-                            else:
-                                f.write(f"{link}\n")
+                        if should_send_files:
+                            f.write(f"\n📱 ФАЙЛЫ ОТПРАВЛЕНЫ В ЧАТ:\n")
+                            f.write(f"✅ Все {len(fragments)} фрагментов отправлены прямо в Telegram\n")
+                            f.write(f"📊 Общая длительность: {total_duration:.1f} сек\n")
+                            f.write(f"💾 Общий размер: {total_size_mb:.1f} МБ\n\n")
+                            
+                            for i, fragment in enumerate(fragments, 1):
+                                file_size_mb = (fragment.size_bytes or 0) / (1024 * 1024)
+                                f.write(f"📹 Фрагмент {i}: {fragment.duration:.1f}s, {file_size_mb:.1f}MB\n")
+                        
+                        if not drive_links and should_send_files:
+                            f.write(f"\n⚠️ GOOGLE DRIVE НЕДОСТУПЕН\n")
+                            f.write(f"Причина: Превышена квота хранилища\n")
+                            f.write(f"Файлы доступны только в чате Telegram\n")
                         
                         f.write(f"\n✅ Все файлы готовы к использованию!")
-                        f.write(f"\n🤖 Прямые ссылки совместимы с ботами для автоматического скачивания")
+                        if drive_links:
+                            f.write(f"\n🤖 Прямые ссылки совместимы с ботами для автоматического скачивания")
                         links_file_path = f.name
                     
                     logger.info(f"Links file created successfully at: {links_file_path}")
                 except Exception as e:
                     logger.error(f"Failed to create links file: {e}")
             else:
-                logger.warning(f"No drive links found for task {task_id}, file will not be created")
+                logger.warning(f"No drive links and not sending files directly for task {task_id}, file will not be created")
             
             text = f"""
 ✅ <b>Обработка завершена!</b>
@@ -1381,10 +1403,10 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
 • {actual_fragments_count} фрагментов в формате 9:16
 • Качественная обработка видео
 • Готово к использованию
-• 🤖 Прямые ссылки для ботов (общедоступные)
 
-{f"📱 Короткие видео отправлены прямо в чат!" if should_send_files else "📁 Файлы загружены на Google Drive с публичным доступом"}
+{f"📱 Видео будет отправлено прямо в чат!" if should_send_files else "📁 Ссылки на Google Drive будут отправлены"}
 {f"📁 + дополнительно ссылки на Google Drive" if should_send_files and drive_links else ""}
+{f"⚠️ Google Drive недоступен (переполнен)" if not drive_links and not should_send_files else ""}
             """
             
             try:
@@ -1398,8 +1420,70 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                 )
                 logger.info(f"Main notification sent successfully to user {user_id}")
                 
+                # Send video files directly to chat if conditions are met
+                if should_send_files:
+                    logger.info(f"Sending {len(fragments)} video files directly to user {user_id}")
+                    
+                    for i, fragment in enumerate(fragments, 1):
+                        if fragment.local_path and os.path.exists(fragment.local_path):
+                            try:
+                                file_size_mb = (fragment.size_bytes or os.path.getsize(fragment.local_path)) / (1024 * 1024)
+                                
+                                caption = f"""🎬 <b>Фрагмент {i}/{len(fragments)}</b>
+
+⏱️ Длительность: {fragment.duration:.1f}s
+📊 Размер: {file_size_mb:.1f}MB
+📐 Разрешение: {fragment.resolution or 'unknown'}
+🎯 Готов к публикации в Shorts!
+
+#VideoFragment #Task{task_id[:8]}"""
+                                
+                                document = FSInputFile(fragment.local_path)
+                                await bot.send_video(
+                                    chat_id=user_id,
+                                    video=document,
+                                    caption=caption,
+                                    parse_mode="HTML",
+                                    supports_streaming=True
+                                )
+                                logger.info(f"Sent fragment {i} directly to user {user_id}: {os.path.basename(fragment.local_path)}")
+                            except Exception as video_error:
+                                logger.error(f"Failed to send fragment {i} to user {user_id}: {video_error}")
+                                # Try sending as document if video fails
+                                try:
+                                    document = FSInputFile(fragment.local_path)
+                                    await bot.send_document(
+                                        chat_id=user_id,
+                                        document=document,
+                                        caption=f"📹 Фрагмент {i}/{len(fragments)} (как файл)"
+                                    )
+                                    logger.info(f"Sent fragment {i} as document to user {user_id}")
+                                except Exception as doc_error:
+                                    logger.error(f"Failed to send fragment {i} as document to user {user_id}: {doc_error}")
+                    
+                    # Send summary message
+                    summary_text = f"""
+📱 <b>Видео отправлено прямо в чат!</b>
+
+✅ Отправлено фрагментов: {len(fragments)}
+📊 Общая длительность: {total_duration:.1f} сек
+💾 Общий размер: {total_size_mb:.1f} МБ
+
+🎯 Все файлы готовы к использованию!
+📲 Можете сразу делиться или редактировать
+
+{f"📁 Также доступно на Google Drive (см. файл со ссылками выше)" if drive_links else "⚠️ Google Drive недоступен, файлы только в чате"}
+                    """
+                    
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=summary_text,
+                        parse_mode="HTML"
+                    )
+                    logger.info(f"Sent video summary to user {user_id}")
+                
                 # Send links file if available
-                if links_file_path and drive_links:
+                if links_file_path and (drive_links or should_send_files):
                     logger.info(f"Sending links file to user {user_id}: {links_file_path}")
                     try:
                         document = FSInputFile(links_file_path, filename=f"video_links_{task_id[:8]}.txt")
@@ -1422,8 +1506,8 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                 else:
                     if not links_file_path:
                         logger.warning(f"No links file to send to user {user_id}")
-                    if not drive_links:
-                        logger.warning(f"No drive links to send to user {user_id}")
+                    if not (drive_links or should_send_files):
+                        logger.warning(f"No drive links or files to send to user {user_id}")
                 
                 # Send short videos directly to chat if applicable
                 if should_send_files:
