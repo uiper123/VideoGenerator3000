@@ -1281,6 +1281,8 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
             fragments = session.query(VideoFragment).filter_by(task_id=task_id).all()
             actual_fragments_count = len(fragments)
             
+            drive_links = []  # <-- перемещено сюда, чтобы переменная была определена заранее
+            
             # Calculate total duration and size for short video detection
             total_duration = sum(float(f.duration or 0) for f in fragments)
             total_size_mb = sum((f.size_bytes or 0) for f in fragments) / (1024 * 1024)
@@ -1302,7 +1304,6 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
             logger.info(f"Short video check for task {task_id}: send_files={should_send_files}")
             
             # Get drive links
-            drive_links = []
             logger.info(f"Processing {len(fragments)} fragments for task {task_id}")
             
             for fragment in fragments:
