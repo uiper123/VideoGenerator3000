@@ -472,7 +472,7 @@ class VideoProcessor:
             font_size = int(height * style['size_ratio'])
             y_position = int(height * style['position_y_ratio'])
             
-            title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={font_size}:fontcolor={style['color']}:bordercolor={style['border_color']}:borderw={style['border_width']}:x=(w-text_w)/2:y={y_position}"
+            title_filter = f"drawtext:text='{title_escaped}':fontfile={fontfile}:fontsize={font_size}:fontcolor={style['color']}:bordercolor={style['border_color']}:borderw={style.get('border_width', 3)}:x=(w-text_w)/2:y={y_position}"
             filters.append(f"[with_main]{title_filter}[output]")
         # Note: If no title, the final output is [with_main], not [output]
         
@@ -1448,7 +1448,7 @@ class VideoProcessor:
             
             title_filter = (
                 f"drawtext=text='{title_escaped}':fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':"
-                f"fontsize={font_size}:fontcolor={title_style['color']}:borderw={title_style['border_width']}:"
+                f"fontsize={font_size}:fontcolor={title_style['color']}:borderw={title_style.get('border_width', 3)}:"
                 f"bordercolor={title_style['border_color']}:x=(w-text_w)/2:y={y_pos}"
             )
             video_filters.append(f"{current_stream}{title_filter}[titled]")
