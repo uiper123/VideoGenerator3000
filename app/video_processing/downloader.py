@@ -727,10 +727,52 @@ class VideoDownloader:
             raise DownloadError("Скачивание завершено, но файл не найден")
         
         local_path = os.path.join(self.download_dir, downloaded_files[0])
-        video_info = self._get_video_info_ytdlp(url, extra_args)
-        video_info['local_path'] = local_path
-        video_info['file_size'] = os.path.getsize(local_path) if os.path.exists(local_path) else 0
-        return video_info
+        
+        # Create basic video info from downloaded file
+        try:
+            file_size = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+            
+            # Try to get basic info with ffprobe
+            try:
+                ffprobe_info = self._get_video_info_ffprobe(local_path)
+                title = ffprobe_info.get('title', 'Downloaded Video')
+                duration = ffprobe_info.get('duration', 0)
+            except:
+                # Fallback to basic info
+                title = 'Downloaded Video'
+                duration = 0
+            
+            video_info = {
+                'title': title,
+                'duration': duration,
+                'description': '',
+                'author': 'Unknown',
+                'views': 0,
+                'thumbnail': '',
+                'url': url,
+                'format': 'mp4',
+                'resolution': 'unknown',
+                'local_path': local_path,
+                'file_size': file_size
+            }
+            
+            return video_info
+            
+        except Exception as e:
+            logger.warning(f"Failed to create video info, using minimal fallback: {e}")
+            return {
+                'title': 'Downloaded Video',
+                'duration': 0,
+                'description': '',
+                'author': 'Unknown',
+                'views': 0,
+                'thumbnail': '',
+                'url': url,
+                'format': 'mp4',
+                'resolution': 'unknown',
+                'local_path': local_path,
+                'file_size': os.path.getsize(local_path) if os.path.exists(local_path) else 0
+            }
     
     def _select_best_stream(self, streams, quality: str):
         """
@@ -850,20 +892,37 @@ class VideoDownloader:
             
             video_info = json.loads(result.stdout)
             
+            # Safely extract video information with fallbacks
             return {
                 'title': video_info.get('title', 'Unknown'),
-                'duration': video_info.get('duration', 0),
-                'description': video_info.get('description', '')[:500],
-                'author': video_info.get('uploader', 'Unknown'),
-                'views': video_info.get('view_count', 0),
+                'duration': int(video_info.get('duration', 0)) if video_info.get('duration') else 0,
+                'description': str(video_info.get('description', ''))[:500] if video_info.get('description') else '',
+                'author': video_info.get('uploader', video_info.get('channel', 'Unknown')),
+                'views': int(video_info.get('view_count', 0)) if video_info.get('view_count') else 0,
                 'thumbnail': video_info.get('thumbnail', ''),
-                'url': url
+                'url': url,
+                'format': video_info.get('ext', 'mp4'),  # Default to mp4 if format not available
+                'resolution': video_info.get('resolution', 'unknown'),
+                'file_size': int(video_info.get('filesize_approx', 0)) if video_info.get('filesize_approx') else 0
             }
             
         except subprocess.TimeoutExpired:
             raise DownloadError("Video info extraction timed out")
         except json.JSONDecodeError as e:
-            raise DownloadError(f"Failed to parse video info: {e}")
+            logger.warning(f"Failed to parse JSON from yt-dlp: {e}")
+            # Return minimal info if JSON parsing fails
+            return {
+                'title': 'Unknown',
+                'duration': 0,
+                'description': '',
+                'author': 'Unknown',
+                'views': 0,
+                'thumbnail': '',
+                'url': url,
+                'format': 'mp4',
+                'resolution': 'unknown',
+                'file_size': 0
+            }
         except Exception as e:
             raise DownloadError(f"Failed to get video info: {e}")
     
