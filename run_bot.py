@@ -25,6 +25,14 @@ if __name__ == "__main__":
             print("[INFO] token.pickle создан из переменной окружения GOOGLE_OAUTH_TOKEN_BASE64")
         # --- конец блока ---
 
+        # --- Отладочный вывод для проверки переменной окружения ---
+        token_b64 = os.getenv("GOOGLE_OAUTH_TOKEN_BASE64")
+        if token_b64:
+            print("[DEBUG] GOOGLE_OAUTH_TOKEN_BASE64 (first 20):", token_b64[:20])
+        else:
+            print("[DEBUG] GOOGLE_OAUTH_TOKEN_BASE64 not set")
+        # --- конец отладочного вывода ---
+
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
