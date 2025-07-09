@@ -131,7 +131,6 @@ Thumbs.db
 
 # Google API credentials and tokens
 google-credentials.json
-token.pickle
 credentials.json
 client_secret.json
 
