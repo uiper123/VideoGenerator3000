@@ -51,20 +51,73 @@ class VideoDownloader:
         os.makedirs(download_dir, exist_ok=True)
         self.user_proxy = user_proxy
         self.user_cookies = user_cookies
+        
+        # Check if global cookies are available
+        try:
+            from app.config.settings import settings
+            self._has_global_cookies = bool(settings.youtube_cookies_content)
+        except:
+            self._has_global_cookies = False
     
     def download(self, url: str, quality: str = "720p") -> Dict[str, Any]:
         """
-        Основная точка входа для скачивания видео. yt-dlp — основной способ, всегда использует cookies-файл, если он найден.
+        Main download method with multiple fallback strategies.
         """
+        logger.info(f"Attempting to download video from {url} (attempt 1)")
+        
         extra_args = []
-        cookies_file = self._get_cookies_path()
-        logger.info(f"[DEBUG] Значение self.user_proxy: {self.user_proxy!r}")
-        logger.info(f"[DEBUG] Путь к cookies-файлу: {cookies_file}")
-        logger.info(f"[DEBUG] Файл cookies существует: {os.path.exists(cookies_file) if cookies_file else False}")
-        if cookies_file:
-            logger.info(f"yt-dlp будет использовать cookies-файл: {cookies_file}")
-            extra_args += ["--cookies", cookies_file]
-        return self._try_ytdlp_download(url, quality, extra_args)
+        
+        # Add proxy if available
+        if self.user_proxy:
+            logger.info(f"[DEBUG] Значение self.user_proxy: {self.user_proxy}")
+            extra_args.extend(['--proxy', self.user_proxy])
+        else:
+            logger.info("[DEBUG] Значение self.user_proxy: None")
+        
+        if self._is_youtube_url(url):
+            # Strategy 1: Try yt-dlp with cookies first
+            try:
+                return self._try_ytdlp_download(url, quality, extra_args)
+            except DownloadError as e:
+                error_msg = str(e)
+                logger.warning(f"yt-dlp with cookies failed: {error_msg}")
+                
+                # Check if it's bot detection
+                if "Sign in to confirm you're not a bot" in error_msg or "not a bot" in error_msg:
+                    logger.info("Bot detection encountered, trying PyTubeFix as fallback...")
+                    try:
+                        return self._download_youtube_pytubefix(url, quality, use_po_token=False)
+                    except Exception as pytubefix_error:
+                        logger.warning(f"PyTubeFix fallback failed: {pytubefix_error}")
+                        # Continue to next strategy
+                
+                # Strategy 2: Try without cookies
+                if self.user_cookies or hasattr(self, '_has_global_cookies'):
+                    logger.info("Trying yt-dlp without cookies...")
+                    old_cookies = self.user_cookies
+                    self.user_cookies = None
+                    try:
+                        result = self._try_ytdlp_download(url, quality, extra_args)
+                        self.user_cookies = old_cookies  # Restore cookies
+                        return result
+                    except Exception as no_cookies_error:
+                        self.user_cookies = old_cookies  # Restore cookies
+                        logger.warning(f"yt-dlp without cookies failed: {no_cookies_error}")
+                
+                # Strategy 3: Final fallback to PyTubeFix with different settings
+                logger.info("Trying final PyTubeFix fallback...")
+                try:
+                    return self._download_youtube_pytubefix(url, quality, use_po_token=True)
+                except Exception as final_error:
+                    logger.error(f"All YouTube download strategies failed. Final error: {final_error}")
+                    raise DownloadError(f"All download methods failed. YouTube may be blocking access. Last error: {error_msg}")
+        else:
+            # Non-YouTube URLs
+            try:
+                return self._try_ytdlp_download(url, quality, extra_args)
+            except Exception as e:
+                logger.error(f"Download failed for non-YouTube URL: {e}")
+                raise DownloadError(f"Download failed: {e}")
     
     async def download_telegram_file(self, bot, file_id: str, file_name: str, file_size: int) -> Dict[str, Any]:
         """
@@ -620,11 +673,29 @@ class VideoDownloader:
             'format': f"bestvideo[height<={quality[:-1]}]+bestaudio/best[height<={quality[:-1]}]/best",
             'outtmpl': output_template,
             'merge_output_format': 'mp4',
-            'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            'referer': 'https://www.youtube.com/',
             'noplaylist': True,
             'quiet': True,
             'nocheckcertificate': True,
             'retries': 3,
+            'sleep_interval': 1,
+            'max_sleep_interval': 5,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['webpage'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip,deflate',
+                'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
         }
         
         # Приоритет: пользовательские cookies > глобальные cookies
