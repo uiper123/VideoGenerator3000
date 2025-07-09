@@ -29,80 +29,54 @@ TARGET_FOLDER_ID = "1q3DdrbnGRSAKL6Omiy6t0MghP4ZGtiTn"
 
 def get_google_credentials() -> Optional[Any]:
     """
-    Get Google credentials - tries OAuth first, then Service Account.
-    
-    Priority:
-    1. OAuth 2.0 credentials (stored tokens)
-    2. Service Account from Base64 env var
-    3. Service Account from file
-    
+    Get Google OAuth credentials from file or from Base64 env var.
     Returns:
-        Credentials object if found, else None.
-    """
-    # Try OAuth credentials first
-    oauth_creds = get_oauth_credentials()
-    if oauth_creds:
-        return oauth_creds
-    
-    # Fallback to service account
-    return get_service_account_credentials()
-
-def get_oauth_credentials() -> Optional[Credentials]:
-    """
-    Get OAuth 2.0 credentials from stored token or environment variable.
-    
-    Returns:
-        google.oauth2.credentials.Credentials if found and valid, else None.
+        google.oauth2.credentials.Credentials if found, else None.
     """
     creds = None
-    
-    # Try to load from Base64 environment variable first
-    token_base64 = os.getenv("GOOGLE_OAUTH_TOKEN_BASE64")
-    if token_base64:
+
+    # Сначала пробуем загрузить из файла
+    token_path = "token.pickle"
+    if os.path.exists(token_path):
         try:
-            token_data = base64.b64decode(token_base64)
-            creds = pickle.loads(token_data)
-            logger.info("Loaded OAuth credentials from Base64 environment variable")
+            with open(token_path, 'rb') as token:
+                creds = pickle.load(token)
+                logger.info("Loaded existing OAuth credentials from token.pickle")
         except Exception as e:
-            logger.error(f"Failed to load OAuth token from Base64: {e}")
-    
-    # Fallback to local file
+            logger.error(f"Failed to load OAuth token: {e}")
+            return None
+
+    # Если не получилось — пробуем из переменной окружения
     if not creds:
-        token_path = "token.pickle"
-        if os.path.exists(token_path):
+        token_base64 = os.getenv("GOOGLE_OAUTH_TOKEN_BASE64")
+        if token_base64:
             try:
-                with open(token_path, 'rb') as token:
-                    creds = pickle.load(token)
-                    logger.info("Loaded existing OAuth credentials from token.pickle")
+                token_data = base64.b64decode(token_base64)
+                creds = pickle.loads(token_data)
+                logger.info("Loaded OAuth credentials from Base64 environment variable")
             except Exception as e:
-                logger.error(f"Failed to load OAuth token: {e}")
-                return None
-    
+                logger.error(f"Failed to load OAuth token from Base64: {e}")
+
     # Check if credentials are valid
     if creds and creds.valid:
         return creds
-    
+
     # Try to refresh if we have refresh token
     if creds and creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            
             # Save refreshed credentials
-            if token_base64:
-                # If loaded from environment variable, log that we can't auto-update
-                logger.info("Refreshed OAuth credentials (loaded from env var - manual update may be needed)")
-            else:
-                # Save to local file
-                token_path = "token.pickle"
+            if os.path.exists(token_path):
                 with open(token_path, 'wb') as token:
                     pickle.dump(creds, token)
                 logger.info("Refreshed OAuth credentials and saved to file")
-            
+            else:
+                logger.info("Refreshed OAuth credentials (loaded from env var - manual update may be needed)")
             return creds
         except Exception as e:
             logger.error(f"Failed to refresh OAuth token: {e}")
             return None
-    
+
     logger.info("No valid OAuth credentials found")
     return None
 
