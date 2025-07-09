@@ -8,14 +8,25 @@ import sys
 import logging
 from urllib.parse import urlparse, parse_qs
 import webbrowser
+import json
 
-# Add the app directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
+# Add the project root to the path
+project_root = os.path.dirname(__file__)
+sys.path.insert(0, project_root)
 
-from services.google_drive import get_oauth_authorization_url, handle_oauth_callback
+from app.services.google_drive import get_oauth_authorization_url, handle_oauth_callback
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def get_client_secrets_from_file(path="client_secret.json"):
+    if not os.path.exists(path):
+        return None, None
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    creds = data.get("installed") or data.get("web") or data
+    return creds.get("client_id"), creds.get("client_secret")
+
 
 def setup_oauth():
     """Setup OAuth 2.0 authentication."""
@@ -26,6 +37,16 @@ def setup_oauth():
     client_id = os.getenv("GOOGLE_OAUTH_CLIENT_ID")
     client_secret = os.getenv("GOOGLE_OAUTH_CLIENT_SECRET")
     
+    # Если переменные не заданы — пробуем прочитать из client_secret.json
+    if not client_id or not client_secret:
+        file_client_id, file_client_secret = get_client_secrets_from_file("client_secret.json")
+        if file_client_id and file_client_secret:
+            print("ℹ️  Использую client_secret.json для OAuth")
+            client_id = file_client_id
+            client_secret = file_client_secret
+            os.environ["GOOGLE_OAUTH_CLIENT_ID"] = client_id
+            os.environ["GOOGLE_OAUTH_CLIENT_SECRET"] = client_secret
+
     if not client_id or not client_secret:
         print("❌ Ошибка: Переменные окружения не настроены!")
         print()
@@ -99,7 +120,7 @@ def setup_oauth():
 
 def check_authentication():
     """Check current authentication status."""
-    from services.google_drive import GoogleDriveService
+    from app.services.google_drive import GoogleDriveService
     
     print("🔍 Проверка текущей аутентификации...")
     

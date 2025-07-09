@@ -4,7 +4,7 @@ Uses Pydantic Settings for validation and environment variable management.
 """
 import os
 from typing import Optional, List
-from pydantic import Field, field_validator, SecretStr
+from pydantic import Field, field_validator, SecretStr, ConfigDict
 from pydantic_settings import BaseSettings
 
 
@@ -238,10 +238,12 @@ class AppSettings(BaseSettings):
             raise ValueError(f'Environment must be one of: {valid_envs}')
         return v
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8", 
+        case_sensitive=False,
+        extra='ignore'  # Ignore extra fields from .env file
+    )
 
 
 # Global settings instance

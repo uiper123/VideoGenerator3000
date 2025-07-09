@@ -760,19 +760,19 @@ class VideoDownloader:
             
         except Exception as e:
             logger.warning(f"Failed to create video info, using minimal fallback: {e}")
-            return {
+        return {
                 'title': 'Downloaded Video',
                 'duration': 0,
                 'description': '',
                 'author': 'Unknown',
                 'views': 0,
                 'thumbnail': '',
-                'url': url,
-                'format': 'mp4',
+            'url': url,
+            'format': 'mp4',
                 'resolution': 'unknown',
                 'local_path': local_path,
                 'file_size': os.path.getsize(local_path) if os.path.exists(local_path) else 0
-            }
+        }
     
     def _select_best_stream(self, streams, quality: str):
         """
