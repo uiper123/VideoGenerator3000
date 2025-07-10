@@ -143,7 +143,7 @@ class VideoProcessor:
                 video_path
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=28800)
             data = json.loads(result.stdout)
             
             # Find video stream
@@ -243,7 +243,7 @@ class VideoProcessor:
             ]
             
             try:
-                subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=120)
+                subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=28800)
                 
                 if os.path.exists(fragment_path):
                     file_size = os.path.getsize(fragment_path)
@@ -323,7 +323,7 @@ class VideoProcessor:
                 capture_output=True, 
                 text=True, 
                 check=True,
-                timeout=300  # 5 minute timeout per fragment
+                timeout=28800  # 5 minute timeout per fragment
             )
             
             # Get output file info
@@ -584,7 +584,7 @@ class VideoProcessor:
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=30
+                timeout=28800
             )
             
             return os.path.exists(output_path)
@@ -921,7 +921,7 @@ class VideoProcessor:
                     capture_output=True,
                     text=True,
                     check=True,
-                    timeout=600
+                    timeout=28800
                 )
                 
                 return os.path.exists(output_path)
@@ -980,7 +980,7 @@ class VideoProcessor:
             ])
             
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300)
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=28800)
             except subprocess.CalledProcessError as e:
                 logger.error(f"FFmpeg audio extraction failed: {e.stderr}")
                 logger.error(f"FFmpeg command: {' '.join(cmd)}")
@@ -1247,7 +1247,7 @@ class VideoProcessor:
             logger.info(f"FFmpeg command: {' '.join(cmd)}")
             
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=3600)
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=28800)
                 logger.info("FFmpeg completed successfully")
                 if result.stderr:
                     logger.warning(f"FFmpeg stderr: {result.stderr}")
@@ -1327,7 +1327,7 @@ class VideoProcessor:
                 ]
                 
                 # Run FFmpeg for cutting
-                result = subprocess.run(cut_cmd, capture_output=True, text=True, check=True, timeout=300)
+                result = subprocess.run(cut_cmd, capture_output=True, text=True, check=True, timeout=28800)
                 
                 if os.path.exists(fragment_path):
                     file_size = os.path.getsize(fragment_path)
@@ -1591,7 +1591,7 @@ class VideoProcessor:
                     chunk_path
                 ]
                 
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=300)
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=28800)
                 
                 if os.path.exists(chunk_path):
                     chunk_paths.append(chunk_path)
