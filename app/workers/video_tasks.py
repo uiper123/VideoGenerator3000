@@ -1384,7 +1384,7 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                         
                         f.write(f"\n✅ Все файлы готовы к использованию!")
                         if drive_links:
-                            f.write(f"\n🤖 Прямые ссылки совместимы с ботами для автоматического скачивания")
+                        f.write(f"\n🤖 Прямые ссылки совместимы с ботами для автоматического скачивания")
                         links_file_path = f.name
                     
                     logger.info(f"Links file created successfully at: {links_file_path}")
