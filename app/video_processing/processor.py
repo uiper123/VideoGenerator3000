@@ -307,8 +307,8 @@ class VideoProcessor:
                 '-t', str(duration),
                 '-vf', self._build_video_filters(output_width, output_height),
                 '-c:v', 'libx264',
-                '-preset', 'medium',
-                '-crf', '23',
+                '-preset', 'slow',
+                '-crf', '14',
                 '-r', str(SHORTS_FPS),
                 '-c:a', 'aac',
                 '-b:a', '128k',
@@ -743,8 +743,8 @@ class VideoProcessor:
                 '-map', '[output]',  # Map the processed video stream
                 '-map', '0:a?',  # Map the original audio stream if it exists
                 '-c:v', 'libx264',
-                '-preset', 'medium',
-                '-crf', '20',  # Higher quality for professional look
+                '-preset', 'slow',
+                '-crf', '14',  # Higher quality for professional look
                 '-r', str(SHORTS_FPS),
                 '-c:a', 'aac',
                 '-b:a', '192k',  # Higher audio quality
@@ -909,8 +909,8 @@ class VideoProcessor:
                     '-map', '0:v',  # Map video stream
                     '-map', '0:a?',  # Map audio stream if exists
                     '-c:v', 'libx264',
-                    '-preset', 'medium',
-                    '-crf', '20',
+                    '-preset', 'slow',
+                    '-crf', '14',
                     '-c:a', 'copy',  # Copy audio without re-encoding
                     '-y',
                     output_path
@@ -1230,8 +1230,8 @@ class VideoProcessor:
                 '-map', output_stream,  # Map processed video
                 '-map', '0:a?',  # Map original audio if exists
                 '-c:v', 'libx264',
-                '-preset', 'medium',
-                '-crf', '20',
+                '-preset', 'slow',
+                '-crf', '14',
                 '-r', str(SHORTS_FPS),
                 '-c:a', 'aac',
                 '-b:a', '192k',
@@ -1493,8 +1493,9 @@ class VideoProcessor:
             '-map', output_stream_name,
             '-map', '0:a?',
             '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-crf', '18',
+            '-preset', 'slow',
+            '-crf', '14',
+            '-profile:v', 'high',
             '-pix_fmt', 'yuv420p',
             '-c:a', 'aac',
             '-b:a', '192k',

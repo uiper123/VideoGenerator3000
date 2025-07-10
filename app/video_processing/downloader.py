@@ -59,7 +59,7 @@ class VideoDownloader:
         except:
             self._has_global_cookies = False
     
-    def download(self, url: str, quality: str = "1080p") -> Dict[str, Any]:
+    def download(self, url: str, quality: str = "best") -> Dict[str, Any]:
         """
         Main download method with multiple fallback strategies.
         """
@@ -670,42 +670,27 @@ class VideoDownloader:
         temp_id = str(uuid.uuid4())[:8]
         output_template = os.path.join(self.download_dir, f"{temp_id}_%(id)s.%(ext)s")
         
-        # Обновленный формат для предпочтения 1080p, но с возможностью выбора другого качества
-        quality_map = {
-            '1080p': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
-            '720p': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
-            '4k': 'bestvideo[height<=2160]+bestaudio/best[height<=2160]',
-            'best': 'bestvideo+bestaudio/best'
-        }
-        format_string = quality_map.get(quality, quality_map['best'])
-
+        # Формат для максимального качества
+        ytdlp_format = 'bestvideo+bestaudio/best'
         ydl_opts = {
-            'format': format_string,
+            'format': ytdlp_format,
             'outtmpl': output_template,
-            'merge_output_format': 'mp4',
-            'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            'referer': 'https://www.youtube.com/',
             'noplaylist': True,
             'quiet': True,
-            'nocheckcertificate': True,
-            'retries': 3,
-            'sleep_interval': 1,
-            'max_sleep_interval': 5,
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],
-                    'player_skip': ['webpage'],
-                }
-            },
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Accept-Encoding': 'gzip,deflate',
-                'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.7',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-            }
+            'merge_output_format': 'mp4',
+            'retries': 5,
+            'continuedl': True,
+            'max_filesize': None,
+            'overwrites': True,
+            'no_warnings': True,
+            'ignoreerrors': True,
+            'writethumbnail': False,
+            'writeautomaticsub': False,
+            'writesubtitles': False,
+            'postprocessors': [{
+                'key': 'FFmpegVideoConvertor',
+                'preferedformat': 'mp4',
+            }],
         }
         
         # Приоритет: пользовательские cookies > глобальные cookies
