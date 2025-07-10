@@ -59,7 +59,7 @@ class VideoDownloader:
         except:
             self._has_global_cookies = False
     
-    def download(self, url: str, quality: str = "720p") -> Dict[str, Any]:
+    def download(self, url: str, quality: str = "1080p") -> Dict[str, Any]:
         """
         Main download method with multiple fallback strategies.
         """
@@ -669,8 +669,18 @@ class VideoDownloader:
         logger.info(f"Пробуем скачать через yt-dlp (Python API) с доп. аргументами: {extra_args}")
         temp_id = str(uuid.uuid4())[:8]
         output_template = os.path.join(self.download_dir, f"{temp_id}_%(id)s.%(ext)s")
+        
+        # Обновленный формат для предпочтения 1080p, но с возможностью выбора другого качества
+        quality_map = {
+            '1080p': 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
+            '720p': 'bestvideo[height<=720]+bestaudio/best[height<=720]',
+            '4k': 'bestvideo[height<=2160]+bestaudio/best[height<=2160]',
+            'best': 'bestvideo+bestaudio/best'
+        }
+        format_string = quality_map.get(quality, quality_map['best'])
+
         ydl_opts = {
-            'format': f"bestvideo[height<={quality[:-1]}]+bestaudio/best[height<={quality[:-1]}]/best",
+            'format': format_string,
             'outtmpl': output_template,
             'merge_output_format': 'mp4',
             'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
