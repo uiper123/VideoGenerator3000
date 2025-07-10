@@ -879,26 +879,12 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
             # Process from URL with optimized workflow
             settings = data.get("settings", {})
 
-            # Получаем длительность видео до скачивания
-            try:
-                downloader = VideoDownloader()
-                info = downloader.get_video_info(source_url)
-                duration_sec = int(info.get('duration', 0))
-            except Exception as e:
-                duration_sec = 0  # fallback
+            # Устанавливаем жесткие лимиты времени
+            soft_limit = 28800  # 8 часов
+            hard_limit = 28800  # 8 часов
 
-            # Функция для расчёта лимита времени (увеличено для больших видео)
-            def get_time_limit_for_video(video_duration_sec):
-                # Коэффициент 5: даём в 5 раз больше времени, чем длительность видео
-                base = video_duration_sec * 8.0  # увеличено с 5.0 до 8.0
-                # Лимит: от 1 часа до 8 часов
-                return int(min(max(base, 3600), 28800))
-
-            soft_limit = get_time_limit_for_video(duration_sec)
-            hard_limit = soft_limit + 600  # +10 минут запас
-
-            # Передаём ffmpeg_timeout в settings (на 1 минуту меньше лимита задачи)
-            settings['ffmpeg_timeout'] = max(soft_limit - 60, 300)
+            # Передаём ffmpeg_timeout в settings
+            settings['ffmpeg_timeout'] = 28800
 
             process_video_chain_optimized.apply_async(
                 args=[task_id, source_url, settings],
@@ -919,20 +905,12 @@ async def start_video_processing(callback: CallbackQuery, state: FSMContext, bot
                 )
                 return
 
-            # Получаем длительность видео для расчёта лимита времени
-            # For uploaded files, we'll use a default timeout since we can't get duration beforehand
-            duration_sec = 600  # Default 10 minutes, will be updated after download
-
-            # Функция для расчёта лимита времени
-            def get_time_limit_for_video(video_duration_sec):
-                base = video_duration_sec * 8.0  # увеличено с 5.0 до 8.0
-                return int(min(max(base, 3600), 28800))
-
-            soft_limit = get_time_limit_for_video(duration_sec)
-            hard_limit = soft_limit + 600  # +10 минут запас
+            # Устанавливаем жесткие лимиты времени
+            soft_limit = 28800  # 8 часов
+            hard_limit = 28800  # 8 часов
 
             # Передаём ffmpeg_timeout в settings
-            settings['ffmpeg_timeout'] = max(soft_limit - 60, 300)
+            settings['ffmpeg_timeout'] = 28800
 
             from app.workers.video_tasks import process_uploaded_file_chain
             
