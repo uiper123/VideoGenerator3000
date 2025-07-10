@@ -130,8 +130,8 @@ GOOGLE_SHEETS_REQUESTS_PER_SECOND = 100
 TELEGRAM_MESSAGES_PER_SECOND = 30
 
 # Background task settings
-CELERY_TASK_TIME_LIMIT = 14400  # 4 hours hard limit
-CELERY_TASK_SOFT_TIME_LIMIT = 13800  # 3 hours 50 minutes
+CELERY_TASK_TIME_LIMIT = 28800  # 8 часов hard limit
+CELERY_TASK_SOFT_TIME_LIMIT = 28800  # 8 часов soft limit
 
 # Error messages
 ERROR_MESSAGES = {

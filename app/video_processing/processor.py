@@ -759,7 +759,7 @@ class VideoProcessor:
                 capture_output=True, 
                 text=True, 
                 check=True,
-                timeout=3600  # Увеличено до 1 часа
+                timeout=28800  # Увеличено до 1 часа
             )
             
             # Add subtitles if enabled
@@ -1502,7 +1502,7 @@ class VideoProcessor:
         ]
 
         # Получаем лимит времени для ffmpeg
-        ffmpeg_timeout = settings.get('ffmpeg_timeout', 7200)
+        ffmpeg_timeout = settings.get('ffmpeg_timeout', 28800)
 
         try:
             logger.info("Executing unified FFmpeg command...")
