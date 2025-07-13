@@ -35,7 +35,7 @@ DEFAULT_TEXT_STYLES = {
     'subtitle': {
         'color': 'white',
         'border_color': 'black', 
-        'border_width': 3,
+        'border_width': 4,
         'size_ratio': 0.05,  # 5% от высоты видео
         'position_y_ratio': 0.85,  # 85% от верха видео (внизу)
     }
@@ -1486,8 +1486,8 @@ class VideoProcessor:
                 word_start = sub['start']
                 word_end = sub['end']
                 
-                anim_duration = 0.3
-                pop_scale = 1.1
+                anim_duration = 0.2
+                pop_scale = 1.3
                 actual_anim_duration = min(anim_duration, word_end - word_start)
                 if actual_anim_duration <= 0.01: continue
 
