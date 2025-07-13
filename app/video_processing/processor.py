@@ -900,16 +900,7 @@ class VideoProcessor:
                 
                 subtitle_filter = (
                     f"drawtext="
-                    f"text='{word_escaped}':"
-                    f"fontfile='{subtitle_font}':"
-                    f"fontsize={fs_anim}:"
-                    f"fontcolor={text_color}:"
-                    f"bordercolor={border_color}:"
-                    f"borderw={border_width}:"
-                    f"x=(w-text_w)/2:"
-                    f"y={subtitle_y}-text_h/2:"
-                    f"alpha={alpha_anim}:"
-                    f"enable='between(t,{word_start},{word_end})'"
+                    f"text='{word_escaped}':fontfile='{subtitle_font}':fontsize={fs_anim}:fontcolor={text_color}:bordercolor={border_color}:borderw={border_width}:x=(w-text_w)/2:y={subtitle_y}-text_h/2:alpha={alpha_anim}:enable='between(t,{word_start},{word_end})'"
                 )
                 
                 subtitle_filters.append(subtitle_filter)
@@ -1425,7 +1416,8 @@ class VideoProcessor:
 
         # Separate font configuration for subtitles (Obelix Pro)
         subtitle_font_path = get_subtitle_font_path()
-        sanitized_subtitle_font_path = subtitle_font_path.replace('\\', '/').replace(':', '\\:')
+        # IMPORTANT: Escape font path for FFmpeg filter syntax, especially for paths with spaces
+        sanitized_subtitle_font_path = f"'{subtitle_font_path.replace(':', r'\:')}'"
 
         # Sanitize paths for FFmpeg filters
         sanitized_font_dir = font_dir_for_ffmpeg.replace('\\', '/').replace(':', '\\:')
@@ -1495,24 +1487,22 @@ class VideoProcessor:
                 anim_duration = 0.3
                 pop_scale = 1.1
                 actual_anim_duration = min(anim_duration, word_end - word_start)
-                if actual_anim_duration <= 0: continue
+                if actual_anim_duration <= 0.01: continue # Avoid division by zero or tiny values
 
+                # Animation progress (0 to 1)
                 anim_progress = f"min(1,max(0,(t-{word_start})/{actual_anim_duration}))"
-                fs_anim = f"if(lt(t,{word_start}),0,if(lt(t,{word_start}+{actual_anim_duration}),{font_size}*(1+({pop_scale}-1)*2*{anim_progress}*(1-{anim_progress})),{font_size}))"
+
+                # Parabolic animation for pop effect: grows to pop_scale then settles to 1.0
+                # The formula 4*x*(1-x) creates a curve from 0 to 1 and back to 0 for x in [0,1]
+                size_multiplier = f"(1+({pop_scale}-1)*4*{anim_progress}*(1-{anim_progress}))"
+                fs_anim = f"if(between(t,{word_start},{word_start}+{actual_anim_duration}),{font_size}*{size_multiplier},{font_size})"
+                
+                # Fade-in animation for alpha
                 alpha_anim = f"if(lt(t,{word_start}),0,if(lt(t,{word_start}+{actual_anim_duration}),{anim_progress},1))"
                 
                 drawtext_filter = (
                     f"drawtext="
-                    f"text='{word_escaped}':"
-                    f"fontfile='{sanitized_subtitle_font_path}':"
-                    f"fontsize={fs_anim}:"
-                    f"fontcolor={text_color}:"
-                    f"bordercolor={border_color}:"
-                    f"borderw={border_width}:"
-                    f"x=(w-text_w)/2:"
-                    f"y={subtitle_y}-text_h/2:"
-                    f"alpha={alpha_anim}:"
-                    f"enable='between(t,{word_start},{word_end})'"
+                    f"text='{word_escaped}':fontfile={sanitized_subtitle_font_path}:fontsize={fs_anim}:fontcolor={text_color}:bordercolor={border_color}:borderw={border_width}:x=(w-text_w)/2:y={subtitle_y}-text_h/2:alpha={alpha_anim}:enable='between(t,{word_start},{word_end})'"
                 )
                 subtitle_drawtext_filters.append(drawtext_filter)
 
