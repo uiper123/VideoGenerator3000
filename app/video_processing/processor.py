@@ -1399,19 +1399,15 @@ class VideoProcessor:
         processed_video_path = os.path.join(self.output_dir, f"processed_ffmpeg_{uuid.uuid4().hex[:8]}.mp4")
         
         # --- Subtitle Generation ---
-        srt_path = None
+        subtitles_data = []
         if settings.get("enable_subtitles", True):
             try:
                 logger.info("Generating subtitles...")
-                subtitles = self.generate_subtitles_from_audio(video_path)
-                if subtitles:
-                    srt_path = os.path.join(self.output_dir, f"subs_{uuid.uuid4().hex[:8]}.srt")
-                    self._generate_srt_file(subtitles, srt_path)
-                else:
+                subtitles_data = self.generate_subtitles_from_audio(video_path)
+                if not subtitles_data:
                     logger.warning("No subtitles were generated.")
             except Exception as e:
                 logger.error(f"Subtitle generation failed: {e}. Continuing without subtitles.")
-                srt_path = None
 
         # --- Font and Style Configuration ---
         font_path = settings.get("font_path")
@@ -1429,12 +1425,10 @@ class VideoProcessor:
 
         # Separate font configuration for subtitles (Obelix Pro)
         subtitle_font_path = get_subtitle_font_path()
-        subtitle_font_dir = get_subtitle_font_dir()
-        subtitle_font_name = get_subtitle_font_name()
+        sanitized_subtitle_font_path = subtitle_font_path.replace('\\', '/').replace(':', '\\:')
 
         # Sanitize paths for FFmpeg filters
         sanitized_font_dir = font_dir_for_ffmpeg.replace('\\', '/').replace(':', '\\:')
-        sanitized_subtitle_font_dir = subtitle_font_dir.replace('\\', '/').replace(':', '\\:')
 
         # --- Build Complex Filter ---
         video_filters = []
@@ -1452,51 +1446,83 @@ class VideoProcessor:
         video_filters.append(f"[main]scale={output_width}:{main_height}:force_original_aspect_ratio=increase[main_scaled]")
         # Then crop to exact size
         video_filters.append(f"[main_scaled]crop={output_width}:{main_height}[main_cropped]")
-        video_filters.append(f"[bg_blurred][main_cropped]overlay=(W-w)/2:{main_area_top}[layout]")
-
+        
+        # 3. Overlay main video on blurred background
+        video_filters.append(f"[bg_blurred][main_cropped]overlay=x=(W-w)/2:y={main_area_top}[layout]")
+        
         current_stream = "[layout]"
-
-        # 3. Title overlay - Reduced font size
+        
+        # 4. Title overlay (if provided) - Fixed font and background
         title = settings.get("title", "")
         if title:
-            title_style = settings.get("title_style", DEFAULT_TEXT_STYLES['title'])
-            title_style['color'] = 'red'  # Жёстко фиксируем цвет
-            title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
-            font_size = int(output_height * 0.045)  # Increased from 0.035 to 0.04 (larger title)
-            y_pos = int(output_height * 0.05)  # Keep position the same
+            title_style = self.create_custom_text_style(
+                'title', 
+                settings.get('title_color', 'red'), 
+                settings.get('title_size', 'medium')
+            )
+            title_font_size = int(output_height * title_style['size_ratio'])
+            title_y = int(output_height * title_style['position_y_ratio'])
+            sanitized_title = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
             
-            # drawtext для титров
             title_filter = (
-                f"drawtext=text='{title_escaped}':fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':"
-                f"fontsize={font_size}:fontcolor={title_style['color']}:borderw={title_style.get('border_width', 3)}:"
-                f"bordercolor={title_style.get('border_color', 'black')}:x=(w-text_w)/2:y={y_pos}"
+                f"drawtext=fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':text='{sanitized_title}':"
+                f"fontsize={title_font_size}:fontcolor={title_style['color']}:"
+                f"x=(w-text_w)/2:y={title_y}:"
+                f"borderw={title_style['border_width']}:bordercolor={title_style['border_color']}"
             )
             video_filters.append(f"{current_stream}{title_filter}[titled]")
             current_stream = "[titled]"
         
-        # 4. Subtitle overlay (if SRT file was created) - Fixed font and background
-        if srt_path:
-            sanitized_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
-            sub_font_size = int(output_height * 0.01)   # Made smaller subtitles (reduced from 0.02 to 0.015)
-            sub_style = (
-                f"FontName='{subtitle_font_name}',FontSize={sub_font_size},"
-                f"PrimaryColour=&HFFFFFF,BorderStyle=1,BackColour=&H00000000,"  # Transparent background
-                f"OutlineColour=&H000000,Outline=2,Shadow=1,Alignment=2,MarginV=60"  # Better outline and shadow
+        # 5. Animated Subtitle Overlay
+        if subtitles_data:
+            subtitle_style_opts = self.create_custom_text_style(
+                'subtitle',
+                settings.get('subtitle_color', 'white'),
+                settings.get('subtitle_size', 'medium')
             )
-            subtitle_filter = f"subtitles='{sanitized_srt_path}':fontsdir='{sanitized_subtitle_font_dir}':force_style='{sub_style}'"
-            video_filters.append(f"{current_stream}{subtitle_filter}[output]")
-            current_stream = "[output]"
+            subtitle_y = int(output_height * subtitle_style_opts['position_y_ratio'])
+            font_size = int(output_height * subtitle_style_opts['size_ratio'])
+            text_color = subtitle_style_opts['color']
+            border_color = subtitle_style_opts.get('border_color', 'black')
+            border_width = subtitle_style_opts.get('border_width', 3)
 
-        # Final output mapping - determine the correct output stream
-        if current_stream == "[layout]":
-            # No title or subs - use layout stream directly
-            output_stream_name = "[layout]"
-        elif current_stream == "[titled]":
-            # Has title but no subs - use titled stream directly  
-            output_stream_name = "[titled]"
-        else:
-            # Has subtitles - use output stream
-            output_stream_name = "[output]"
+            subtitle_drawtext_filters = []
+            for sub in subtitles_data:
+                word_escaped = sub['text'].replace("'", r"\'").replace(":", r"\:").replace(",", r"\,")
+                word_start = sub['start']
+                word_end = sub['end']
+                
+                anim_duration = 0.3
+                pop_scale = 1.1
+                actual_anim_duration = min(anim_duration, word_end - word_start)
+                if actual_anim_duration <= 0: continue
+
+                anim_progress = f"min(1,max(0,(t-{word_start})/{actual_anim_duration}))"
+                fs_anim = f"if(lt(t,{word_start}),0,if(lt(t,{word_start}+{actual_anim_duration}),{font_size}*(1+({pop_scale}-1)*2*{anim_progress}*(1-{anim_progress})),{font_size}))"
+                alpha_anim = f"if(lt(t,{word_start}),0,if(lt(t,{word_start}+{actual_anim_duration}),{anim_progress},1))"
+                
+                drawtext_filter = (
+                    f"drawtext="
+                    f"text='{word_escaped}':"
+                    f"fontfile='{sanitized_subtitle_font_path}':"
+                    f"fontsize={fs_anim}:"
+                    f"fontcolor={text_color}:"
+                    f"bordercolor={border_color}:"
+                    f"borderw={border_width}:"
+                    f"x=(w-text_w)/2:"
+                    f"y={subtitle_y}-text_h/2:"
+                    f"alpha={alpha_anim}:"
+                    f"enable='between(t,{word_start},{word_end})'"
+                )
+                subtitle_drawtext_filters.append(drawtext_filter)
+
+            if subtitle_drawtext_filters:
+                full_subtitle_filter = ",".join(subtitle_drawtext_filters)
+                video_filters.append(f"{current_stream}{full_subtitle_filter}[output]")
+                current_stream = "[output]"
+
+        # Final output mapping
+        output_stream_name = current_stream
         
         final_filter_graph = ";".join(video_filters)
 
@@ -1518,17 +1544,14 @@ class VideoProcessor:
             processed_video_path
         ]
 
-        # Получаем лимит времени для ffmpeg
+        # Get ffmpeg timeout from settings
         ffmpeg_timeout = settings.get('ffmpeg_timeout', 28800)
 
         try:
             logger.info("Executing unified FFmpeg command...")
+            logger.debug(f"FFMPEG COMMAND: {' '.join(cmd)}")
             subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=ffmpeg_timeout)
             logger.info(f"High-performance processing complete. Output: {processed_video_path}")
-            
-            # --- Cleanup ---
-            if srt_path and os.path.exists(srt_path):
-                os.remove(srt_path)
             
             return {
                 'processed_video_path': processed_video_path,
