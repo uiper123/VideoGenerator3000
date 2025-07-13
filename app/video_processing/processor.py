@@ -1304,17 +1304,36 @@ class VideoProcessor:
             
             fragments = []
             
-            # Calculate number of FULL fragments with EXACT duration
-            num_full_fragments = int(total_duration // fragment_duration)
-            
-            for i in range(num_full_fragments):
+            try:
+                processed_video_info = self.get_video_info(processed_video_path)
+                processed_duration = processed_video_info['duration']
+            except Exception as e:
+                logger.error(f"Could not get info for processed video, falling back to original duration. Error: {e}")
+                processed_duration = total_duration
+
+            # Calculate number of fragments
+            if processed_duration < fragment_duration:
+                num_fragments = 1
+            else:
+                # Calculate number of FULL fragments with EXACT duration
+                num_fragments = int(processed_duration // fragment_duration)
+
+            if num_fragments == 0 and processed_duration > 0:
+                logger.warning(f"Video duration ({processed_duration}s) is less than fragment duration ({fragment_duration}s). Creating one fragment.")
+                num_fragments = 1
+
+            for i in range(num_fragments):
                 start_time = i * fragment_duration
                 
-                # ALWAYS use the EXACT fragment_duration (строго заданная длительность)
-                actual_duration = fragment_duration
+                # Use total video duration if it's shorter than a fragment
+                if processed_duration < fragment_duration:
+                    actual_duration = processed_duration
+                else:
+                    # ALWAYS use the EXACT fragment_duration
+                    actual_duration = fragment_duration
                 
-                # Ensure we don't exceed video length
-                if start_time + actual_duration > total_duration:
+                # Safety break, though logic should prevent this
+                if start_time >= processed_duration:
                     break
                 
                 fragment_filename = f"fragment_{i+1:03d}.mp4"
@@ -1347,7 +1366,7 @@ class VideoProcessor:
                         'title': f"{title} - Часть {i+1}" if title else f"Фрагмент {i+1}"
                     }
                     fragments.append(fragment_info)
-                    logger.info(f"Created fragment {i+1}/{num_full_fragments} (exact {actual_duration}s): {fragment_filename}")
+                    logger.info(f"Created fragment {i+1}/{num_fragments} (exact {actual_duration}s): {fragment_filename}")
             
             # Clean up the processed full video (optional, can keep it)
             # os.remove(processed_video_path)
