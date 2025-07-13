@@ -1416,8 +1416,10 @@ class VideoProcessor:
 
         # Separate font configuration for subtitles (Obelix Pro)
         subtitle_font_path = get_subtitle_font_path()
-        # IMPORTANT: Escape font path for FFmpeg filter syntax, especially for paths with spaces
-        sanitized_subtitle_font_path = f"'{subtitle_font_path.replace(':', r'\:')}'"
+        # IMPORTANT: Escape font path for FFmpeg filter syntax.
+        # This handles spaces (by quoting), backslashes, and colons.
+        escaped_path = subtitle_font_path.replace('\\', '/').replace(':', '\\:')
+        sanitized_subtitle_font_path = f"'{escaped_path}'"
 
         # Sanitize paths for FFmpeg filters
         sanitized_font_dir = font_dir_for_ffmpeg.replace('\\', '/').replace(':', '\\:')
@@ -1502,7 +1504,16 @@ class VideoProcessor:
                 
                 drawtext_filter = (
                     f"drawtext="
-                    f"text='{word_escaped}':fontfile={sanitized_subtitle_font_path}:fontsize={fs_anim}:fontcolor={text_color}:bordercolor={border_color}:borderw={border_width}:x=(w-text_w)/2:y={subtitle_y}-text_h/2:alpha={alpha_anim}:enable='between(t,{word_start},{word_end})'"
+                    f"text='{word_escaped}':"
+                    f"fontfile={sanitized_subtitle_font_path}:"
+                    f"fontsize={fs_anim}:"
+                    f"fontcolor={text_color}:"
+                    f"bordercolor={border_color}:"
+                    f"borderw={border_width}:"
+                    f"x=(w-text_w)/2:"
+                    f"y={subtitle_y}-text_h/2:"
+                    f"alpha={alpha_anim}:"
+                    f"enable='between(t,{word_start},{word_end})'"
                 )
                 subtitle_drawtext_filters.append(drawtext_filter)
 
