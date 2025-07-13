@@ -1511,38 +1511,47 @@ class VideoProcessor:
         # Final output mapping
         output_stream_name = current_stream
         
-        final_filter_graph = ";".join(video_filters)
-
         # --- FFmpeg Command Execution ---
-        cmd = [
-            'ffmpeg',
-            '-i', video_path,
-            '-filter_complex', final_filter_graph,
-            '-map', output_stream_name,
-            '-map', '0:a?',
-            '-c:v', 'libx264',
-            '-preset', 'slow',
-            '-crf', '14',
-            '-profile:v', 'high',
-            '-pix_fmt', 'yuv420p',
-            '-c:a', 'aac',
-            '-b:a', '192k',
-            '-y',
-            processed_video_path
-        ]
-
-        # Get ffmpeg timeout from settings
-        ffmpeg_timeout = settings.get('ffmpeg_timeout', 28800)
-
+        # The filter graph is now written to a file to avoid "Argument list too long" errors.
+        filter_script_path = None
         try:
-            logger.info("Executing unified FFmpeg command...")
+            # Create a temporary file to hold the filter graph
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt', encoding='utf-8') as f:
+                filter_script_path = f.name
+                # Write each filter on a new line, which is the correct format for filter scripts
+                f.write(";\n".join(video_filters))
+                f.write("\n")
+
+            logger.info(f"Generated FFmpeg filter script at: {filter_script_path}")
+
+            cmd = [
+                'ffmpeg',
+                '-i', video_path,
+                '-filter_complex_script', filter_script_path,  # Use the script file
+                '-map', output_stream_name,
+                '-map', '0:a?',
+                '-c:v', 'libx264',
+                '-preset', 'slow',
+                '-crf', '14',
+                '-profile:v', 'high',
+                '-pix_fmt', 'yuv420p',
+                '-c:a', 'aac',
+                '-b:a', '192k',
+                '-y',
+                processed_video_path
+            ]
+
+            # Get ffmpeg timeout from settings
+            ffmpeg_timeout = settings.get('ffmpeg_timeout', 28800)
+
+            logger.info("Executing unified FFmpeg command with filter script...")
             logger.debug(f"FFMPEG COMMAND: {' '.join(cmd)}")
             subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=ffmpeg_timeout)
             logger.info(f"High-performance processing complete. Output: {processed_video_path}")
-            
+
             return {
                 'processed_video_path': processed_video_path,
-                'fragments': [] # Fragmentation will be a separate step
+                'fragments': []  # Fragmentation will be a separate step
             }
 
         except subprocess.CalledProcessError as e:
@@ -1551,6 +1560,11 @@ class VideoProcessor:
         except subprocess.TimeoutExpired:
             logger.error("Unified FFmpeg processing timed out.")
             raise RuntimeError("FFmpeg processing timed out.")
+        finally:
+            # Clean up the temporary filter script file
+            if filter_script_path and os.path.exists(filter_script_path):
+                os.remove(filter_script_path)
+                logger.info(f"Cleaned up temporary filter script: {filter_script_path}")
     
     def _generate_srt_file(self, subtitles: List[Dict[str, Any]], srt_path: str):
         """Generates an SRT subtitle file from subtitle data."""
