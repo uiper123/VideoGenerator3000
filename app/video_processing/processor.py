@@ -900,7 +900,7 @@ class VideoProcessor:
                 
                 subtitle_filter = (
                     f"drawtext="
-                    f"text='{word_escaped}':fontfile='{subtitle_font}':fontsize={fs_anim}:fontcolor={text_color}:bordercolor={border_color}:borderw={border_width}:x=(w-text_w)/2:y={subtitle_y}-text_h/2:alpha={alpha_anim}:enable='between(t,{word_start},{word_end})'"
+                    f"text='{word_escaped}':fontfile={subtitle_font}:fontsize={fs_anim}:fontcolor={text_color}:bordercolor={border_color}:borderw={border_width}:x=(w-text_w)/2:y={subtitle_y}-text_h/2:alpha={alpha_anim}:enable='between(t,{word_start},{word_end})'"
                 )
                 
                 subtitle_filters.append(subtitle_filter)
@@ -1489,32 +1489,18 @@ class VideoProcessor:
                 anim_duration = 0.3
                 pop_scale = 1.1
                 actual_anim_duration = min(anim_duration, word_end - word_start)
-                if actual_anim_duration <= 0.01: continue # Avoid division by zero or tiny values
+                if actual_anim_duration <= 0.01: continue
 
-                # Animation progress (0 to 1)
-                anim_progress = f"min(1,max(0,(t-{word_start})/{actual_anim_duration}))"
-
-                # Parabolic animation for pop effect: grows to pop_scale then settles to 1.0
-                # The formula 4*x*(1-x) creates a curve from 0 to 1 and back to 0 for x in [0,1]
+                # IMPORTANT: Commas inside expression must be escaped for the filter graph parser.
+                anim_progress = f"min(1\\,max(0\\,(t-{word_start})/{actual_anim_duration}))"
                 size_multiplier = f"(1+({pop_scale}-1)*4*{anim_progress}*(1-{anim_progress}))"
-                fs_anim = f"if(between(t,{word_start},{word_start}+{actual_anim_duration}),{font_size}*{size_multiplier},{font_size})"
                 
-                # Fade-in animation for alpha
-                alpha_anim = f"if(lt(t,{word_start}),0,if(lt(t,{word_start}+{actual_anim_duration}),{anim_progress},1))"
+                # Expressions for fontsize and alpha with escaped commas
+                fs_anim = f"if(between(t\\,{word_start}\\,{word_start}+{actual_anim_duration})\\,{font_size}*{size_multiplier}\\,{font_size})"
+                alpha_anim = f"if(lt(t\\,{word_start})\\,0\\,if(lt(t\\,{word_start}+{actual_anim_duration})\\,{anim_progress}\\,1))"
                 
-                drawtext_filter = (
-                    f"drawtext="
-                    f"text='{word_escaped}':"
-                    f"fontfile={sanitized_subtitle_font_path}:"
-                    f"fontsize={fs_anim}:"
-                    f"fontcolor={text_color}:"
-                    f"bordercolor={border_color}:"
-                    f"borderw={border_width}:"
-                    f"x=(w-text_w)/2:"
-                    f"y={subtitle_y}-text_h/2:"
-                    f"alpha={alpha_anim}:"
-                    f"enable='between(t,{word_start},{word_end})'"
-                )
+                # Construct the filter on a single line to avoid formatting issues
+                drawtext_filter = f"drawtext=text='{word_escaped}':fontfile={sanitized_subtitle_font_path}:fontsize={fs_anim}:fontcolor={text_color}:bordercolor={border_color}:borderw={border_width}:x=(w-text_w)/2:y={subtitle_y}-text_h/2:alpha={alpha_anim}:enable='between(t,{word_start},{word_end})'"
                 subtitle_drawtext_filters.append(drawtext_filter)
 
             if subtitle_drawtext_filters:
