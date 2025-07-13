@@ -221,7 +221,7 @@ def process_video(self, task_id: str, local_path: str, settings_dict: Dict[str, 
         fragment_duration = settings_dict.get("fragment_duration", 30)
         quality = settings_dict.get("quality", "1080p")
         enable_subtitles = settings_dict.get("enable_subtitles", True)
-        title = settings_dict.get("title", "cl.funtime.su")
+        title = settings_dict.get("title", "")
         
         # Create output directory
         output_dir = f"/tmp/processed/{task_id}"

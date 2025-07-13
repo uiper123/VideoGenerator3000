@@ -835,12 +835,12 @@ class VideoProcessor:
         custom_subtitle_style: Dict[str, Any] = None
     ) -> bool:
         """
-        Add animated word-by-word subtitles to video.
+        Add animated word-by-word subtitles to video with a pop-up effect.
         
         Args:
             video_path: Input video path
             output_path: Output video path with subtitles
-            subtitles: List of subtitle segments with timing
+            subtitles: List of subtitle segments with timing (word-level)
             subtitle_style: Style of subtitles (modern, classic, colorful)
             custom_subtitle_style: Custom style settings for subtitles
             
@@ -848,61 +848,72 @@ class VideoProcessor:
             True if successful, False otherwise
         """
         try:
-            # Get video resolution for subtitle positioning
             video_info = self.get_video_info(video_path)
             width = video_info['width']
             height = video_info['height']
             
-            # Use custom style or default
             style = custom_subtitle_style or DEFAULT_TEXT_STYLES['subtitle']
             
-            # Calculate subtitle positioning and sizing
             subtitle_y = int(height * style['position_y_ratio'])
             font_size = int(height * style['size_ratio'])
             
-            # Add pop-out animation parameters
-            anim_dur = 0.3
-            extra_scale = 0.5
-            
-            # Build subtitle filters for word-by-word animation
             subtitle_filters = []
-            
-            for i, subtitle in enumerate(subtitles):
-                words = subtitle['text'].split()
-                start_time = subtitle['start']
-                end_time = subtitle['end']
-                word_duration = (end_time - start_time) / len(words)
+
+            for subtitle in subtitles:
+                word = subtitle['text']
+                word_start = subtitle['start']
+                word_end = subtitle['end']
                 
-                for j, word in enumerate(words):
-                    word_start = start_time + (j * word_duration)
-                    word_end = word_start + word_duration
-                    
-                    # Escape special characters
-                    word_escaped = word.replace("'", "\\'").replace(":", "\\:")
-                    
-                    # Create animated word subtitle with custom styling
-                    if subtitle_style == "modern":
-                        text_color = style['color']
-                        border_color = style.get('border_color', 'black')
-                        border_width = style.get('border_width', 3)
-                    elif subtitle_style == "colorful":
-                        text_color = "yellow"
-                        border_color = style.get('border_color', 'black')
-                        border_width = style.get('border_width', 3)
-                    else:  # classic
-                        text_color = style['color']
-                        border_color = style.get('border_color', 'black')
-                        border_width = max(2, style.get('border_width', 3) - 1)  # Немного тоньше для классического стиля
-                    
-                    # Use Troika font for subtitles
-                    subtitle_font = get_subtitle_font_path()
-                    
-                    # drawtext для субтитров (формирование фильтра)
-                    subtitle_filter = f"drawtext=text='{word_escaped}':fontfile={subtitle_font}:fontsize={font_size} * (1 + {extra_scale} * max(0, 1 - ((t - {word_start}) / {anim_dur}))):fontcolor={text_color}:bordercolor={border_color}:borderw={border_width}:x=(w-text_w)/2:y={subtitle_y}:enable='between(t,{word_start},{word_end})'"
-                    
-                    subtitle_filters.append(subtitle_filter)
+                # Animation parameters
+                anim_duration = 0.3  # seconds
+                pop_scale = 1.1 # Pop to 110%
+                
+                # Ensure animation doesn't exceed word duration
+                actual_anim_duration = min(anim_duration, word_end - word_start)
+                
+                word_escaped = word.replace("'", r"\'").replace(":", r"\:").replace(",", r"\,")
+
+                if subtitle_style == "modern":
+                    text_color = style['color']
+                    border_color = style.get('border_color', 'black')
+                    border_width = style.get('border_width', 3)
+                elif subtitle_style == "colorful":
+                    text_color = "yellow"
+                    border_color = style.get('border_color', 'black')
+                    border_width = style.get('border_width', 3)
+                else:  # classic
+                    text_color = style['color']
+                    border_color = style.get('border_color', 'black')
+                    border_width = max(2, style.get('border_width', 3) - 1)
+                
+                subtitle_font = get_subtitle_font_path()
+                
+                # Time variable for animation progress (0 to 1)
+                anim_progress = f"min(1, (t-{word_start})/{actual_anim_duration})"
+                
+                # Font size animation: pop-up and settle
+                # Grows to pop_scale then back to 1.0
+                fs_anim = f"if(lt(t,{word_start}),0,if(lt(t,{word_start}+{actual_anim_duration}),{font_size}*(1+{pop_scale-1}*2*{anim_progress}*(1-{anim_progress})),{font_size}))"
+
+                # Alpha animation: fade-in
+                alpha_anim = f"if(lt(t,{word_start}),0,if(lt(t,{word_start}+{actual_anim_duration}),{anim_progress},1))"
+                
+                subtitle_filter = (
+                    f"drawtext="
+                    f"text='{word_escaped}':"
+                    f"fontfile='{subtitle_font}':"
+                    f"fontsize={fs_anim}:"
+                    f"fontcolor={text_color}:"
+                    f"bordercolor={border_color}:"
+                    f"borderw={border_width}:"
+                    f"x=(w-text_w)/2:"
+                    f"y={subtitle_y}-text_h/2:"
+                    f"alpha={alpha_anim}:"
+                    f"enable='between(t,{word_start},{word_end})'"
+                )
+                
+                subtitle_filters.append(subtitle_filter)
             
-            # Combine all subtitle filters
             if subtitle_filters:
                 full_filter = ",".join(subtitle_filters)
                 
@@ -1404,41 +1415,61 @@ class VideoProcessor:
 
         # --- Font and Style Configuration ---
         font_path = settings.get("font_path")
-        title = settings.get("title", "cl.funtime.su")
-        title_style = self.create_custom_text_style(
-            'title', 
-            settings.get('title_color', 'red'), 
-            settings.get('title_size', 'medium')
-        ) if title else None
-        
-        subtitle_font_name = get_subtitle_font_name()
-        sanitized_subtitle_font_dir = get_subtitle_font_dir().replace('\\', '/')
+        if font_path and os.path.exists(font_path):
+            font_dir_for_ffmpeg = os.path.dirname(os.path.abspath(font_path))
+            font_name_for_style = os.path.splitext(os.path.basename(font_path))[0]
+        else:
+            obelix_path = "/app/fonts/Obelix Pro.ttf"
+            if os.path.exists(obelix_path):
+                font_dir_for_ffmpeg = "/app/fonts"
+                font_name_for_style = "Obelix Pro"
+            else:
+                font_dir_for_ffmpeg = "/usr/share/fonts/truetype/dejavu"
+                font_name_for_style = "DejaVu Sans"
 
-        # --- Filter Graph Construction ---
+        # Separate font configuration for subtitles (Obelix Pro)
+        subtitle_font_path = get_subtitle_font_path()
+        subtitle_font_dir = get_subtitle_font_dir()
+        subtitle_font_name = get_subtitle_font_name()
+
+        # Sanitize paths for FFmpeg filters
+        sanitized_font_dir = font_dir_for_ffmpeg.replace('\\', '/').replace(':', '\\:')
+        sanitized_subtitle_font_dir = subtitle_font_dir.replace('\\', '/').replace(':', '\\:')
+
+        # --- Build Complex Filter ---
         video_filters = []
         
-        # 1. Main video with optional blur and scaling for background
-        video_filters.append(
-            f"[0:v]split=2[main_for_fg][main_for_bg];"
-            f"[main_for_bg]scale={output_width}:{output_height}:force_original_aspect_ratio=increase,crop={output_width}:{output_height},"
-            f"gblur=sigma=20[bg];"
-            f"[main_for_fg]scale=w={output_width}:h=-1,scale=w='iw*0.9':h=-1[fg];"
-            f"[bg][fg]overlay=(W-w)/2:(H-h)/2[layout]"
-        )
+        # 1. Background (blurred and scaled)
+        video_filters.append("[0:v]split=2[bg][main]")
+        video_filters.append(f"[bg]scale={output_width}:{output_height}:force_original_aspect_ratio=increase,crop={output_width}:{output_height},gblur=sigma=20[bg_blurred]")
+        
+        # 2. Main video (scaled and centered with correct aspect ratio) - Fixed positioning  
+        main_height = int(output_height * 0.65)  # Height of the main video area
+        main_area_top = int(output_height * 0.175)  # Top position of main video area
+        
+        # Scale maintaining aspect ratio and crop to fit exactly
+        # First scale to fill the area (maintaining aspect ratio)
+        video_filters.append(f"[main]scale={output_width}:{main_height}:force_original_aspect_ratio=increase[main_scaled]")
+        # Then crop to exact size
+        video_filters.append(f"[main_scaled]crop={output_width}:{main_height}[main_cropped]")
+        video_filters.append(f"[bg_blurred][main_cropped]overlay=(W-w)/2:{main_area_top}[layout]")
+
         current_stream = "[layout]"
 
-        # 2. Title overlay (if title is provided)
-        if title and title_style:
-            sanitized_title = title.replace("'", "\\'").replace(":", "\\:")
-            title_font_size = int(output_height * title_style['size_ratio'])
-            title_y_pos = int(output_height * title_style['position_y_ratio'])
-            title_font_path_sanitized = (font_path or get_title_font_path()).replace('\\', '/').replace(':', '\\:')
+        # 3. Title overlay - Reduced font size
+        title = settings.get("title", "")
+        if title:
+            title_style = settings.get("title_style", DEFAULT_TEXT_STYLES['title'])
+            title_style['color'] = 'red'  # Жёстко фиксируем цвет
+            title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
+            font_size = int(output_height * 0.045)  # Increased from 0.035 to 0.04 (larger title)
+            y_pos = int(output_height * 0.05)  # Keep position the same
             
+            # drawtext для титров
             title_filter = (
-                f"drawtext=text='{sanitized_title}':fontfile='{title_font_path_sanitized}':"
-                f"fontsize={title_font_size}:fontcolor={title_style['color']}:"
-                f"x=(w-text_w)/2:y={title_y_pos}:borderw={title_style['border_width']}:"
-                f"bordercolor={title_style['border_color']}"
+                f"drawtext=text='{title_escaped}':fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':"
+                f"fontsize={font_size}:fontcolor={title_style['color']}:borderw={title_style.get('border_width', 3)}:"
+                f"bordercolor={title_style.get('border_color', 'black')}:x=(w-text_w)/2:y={y_pos}"
             )
             video_filters.append(f"{current_stream}{title_filter}[titled]")
             current_stream = "[titled]"
