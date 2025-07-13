@@ -1422,7 +1422,7 @@ class VideoProcessor:
             f"[0:v]split=2[main_for_fg][main_for_bg];"
             f"[main_for_bg]scale={output_width}:{output_height}:force_original_aspect_ratio=increase,crop={output_width}:{output_height},"
             f"gblur=sigma=20[bg];"
-            f"[main_for_fg]scale={output_width}:-1,scale=w=min(iw*0.9,if(gte(dar,9/16),{output_width}*0.9,w)):h=-1[fg];"
+            f"[main_for_fg]scale=w={output_width}:h=-1,scale=w='iw*0.9':h=-1[fg];"
             f"[bg][fg]overlay=(W-w)/2:(H-h)/2[layout]"
         )
         current_stream = "[layout]"
