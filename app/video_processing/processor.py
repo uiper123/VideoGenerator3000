@@ -1322,6 +1322,7 @@ class VideoProcessor:
                 logger.warning(f"Video duration ({processed_duration}s) is less than fragment duration ({fragment_duration}s). Creating one fragment.")
                 num_fragments = 1
 
+
             for i in range(num_fragments):
                 start_time = i * fragment_duration
                 
