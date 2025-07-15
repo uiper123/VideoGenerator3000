@@ -11,13 +11,6 @@ import json
 import uuid
 import signal
 
-# Ограничение количества потоков для OpenBLAS и других библиотек
-os.environ["OMP_NUM_THREADS"] = "4"
-os.environ["OPENBLAS_NUM_THREADS"] = "4"
-os.environ["MKL_NUM_THREADS"] = "4"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
-os.environ["NUMEXPR_NUM_THREADS"] = "4"
-
 from app.config.constants import (
     SHORTS_RESOLUTION, 
     SHORTS_FPS, 
@@ -1015,10 +1008,10 @@ class VideoProcessor:
                     raise TimeoutError("Whisper transcription timed out")
                 
                 # Set timeout для предотвращения зависания на длинных аудио
-                timeout_seconds = min(600, duration * 2) if duration else 600  # Уменьшено до 10 минут максимум
+                timeout_seconds = min(1800, duration * 3) if duration else 1800  # Максимум 30 минут, увеличено
                 
-                # Load faster-whisper model (tiny model for better performance)
-                model = WhisperModel("tiny", device="cpu", compute_type="int8", cpu_threads=4, num_workers=2)
+                # Load faster-whisper model (base model for good balance of speed/accuracy)
+                model = WhisperModel("base", device="cpu", compute_type="int8")
                 
                 # Set signal alarm for timeout
                 signal.signal(signal.SIGALRM, timeout_handler)
@@ -1030,11 +1023,7 @@ class VideoProcessor:
                         temp_audio,
                         language="ru",  # Russian language
                         word_timestamps=True,
-                        task="transcribe",
-                        beam_size=1,  # Уменьшено для экономии памяти
-                        best_of=1,     # Уменьшено для экономии памяти
-                        vad_filter=True,
-                        vad_parameters=dict(min_silence_duration_ms=500)
+                        task="transcribe"
                     )
                     
                     # Cancel the alarm
