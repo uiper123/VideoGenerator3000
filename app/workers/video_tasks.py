@@ -357,7 +357,8 @@ def process_uploaded_file_chain(self, task_id: str, file_id: str, file_name: str
         try:
             # Скачиваем файл с Telegram
             logger.info(f"Downloading Telegram file to: {local_path}")
-            download_result = download_telegram_file_sync(file_id, local_path)
+            # Исправлено: передаем все необходимые аргументы
+            download_result = download_telegram_file_sync(task_id, file_id, file_name, file_size, settings_dict)
             
             if not download_result["success"]:
                 raise RuntimeError(f"File download failed: {download_result.get('error', 'unknown error')}")
@@ -552,8 +553,16 @@ def process_uploaded_file_chain(self, task_id: str, file_id: str, file_name: str
                     
                     session.commit()
             
-            # Отправляем уведомление пользователю
-            send_task_completion_notification.delay(task_id)
+            # Импортируем и используем функцию для отправки уведомления о завершении
+            from app.workers.video_tasks import send_completion_notification
+            
+            # Получаем user_id для отправки уведомления
+            user_id = get_user_id_by_task(task_id)
+            if not user_id:
+                logger.warning(f"No user_id found for task {task_id}, notification will not be sent")
+            else:
+                # Отправляем уведомление пользователю с правильными аргументами
+                send_completion_notification.delay(user_id, task_id, len(fragments))
             
             # Возвращаем результаты
             return {
@@ -575,8 +584,14 @@ def process_uploaded_file_chain(self, task_id: str, file_id: str, file_name: str
                     task.error_message = str(exc)
                     session.commit()
             
+            # Заглушка для отправки уведомления о неудаче
+            # В будущем реализовать полноценную функцию
+            def send_task_failure_notification(task_id, error_message):
+                logger.info(f"Task failure notification would be sent for task {task_id}: {error_message}")
+                return {"task_id": task_id, "error": error_message}
+            
             # Отправляем уведомление о неудаче
-            send_task_failure_notification.delay(task_id, str(exc))
+            send_task_failure_notification(task_id, str(exc))
             
             # Повторяем задачу, если это не последняя попытка
             max_retries = 2
