@@ -1406,6 +1406,9 @@ class VideoProcessor:
         video_info = self.get_video_info(video_path)
         output_width, output_height = self._get_output_resolution(settings.get("quality", "1080p"))
         
+        # Log video information
+        logger.info(f"Processing video with dimensions: {video_info['width']}x{video_info['height']}, duration: {video_info['duration']}s")
+        
         # Define output path for the processed video
         processed_video_path = os.path.join(self.output_dir, f"processed_ffmpeg_{uuid.uuid4().hex[:8]}.mp4")
         
@@ -1568,6 +1571,13 @@ class VideoProcessor:
             logger.debug(f"FFMPEG COMMAND: {' '.join(cmd)}")
             subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=ffmpeg_timeout)
             logger.info(f"High-performance processing complete. Output: {processed_video_path}")
+
+            # Log processed video information
+            try:
+                processed_video_info = self.get_video_info(processed_video_path)
+                logger.info(f"Processed video info: dimensions: {processed_video_info['width']}x{processed_video_info['height']}, duration: {processed_video_info['duration']}s")
+            except Exception as e:
+                logger.warning(f"Could not get processed video info: {e}")
 
             return {
                 'processed_video_path': processed_video_path,
