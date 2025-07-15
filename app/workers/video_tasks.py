@@ -5,8 +5,6 @@ import os
 import uuid
 import tempfile
 import logging
-import subprocess
-import shutil
 from typing import Dict, Any, List
 
 from celery import shared_task
@@ -769,134 +767,40 @@ def process_video_chain_optimized(self, task_id: str, url: str, settings_dict: D
         
         logger.info(f"Processed {len(processed_chunks)}/{total_chunks} chunks successfully")
         
-        # Step 4: Creating fragments from processed chunks
+        # Step 4: Create fragments from all processed chunks
         logger.info(f"Step 4/7: Creating fragments from processed chunks for task {task_id}")
         
-        fragments = []
-        for chunk_result in processed_chunks:
-            # Создаем фрагменты из обработанного видео
-            processed_path = chunk_result['processed_path']
-            chunk_processor = chunk_result['processor']
+        all_fragments = []
+        fragment_counter = 1
+        
+        for chunk_info in processed_chunks:
+            chunk_processor = chunk_info['processor']
+            processed_path = chunk_info['processed_path']
             
-            # Настройка длительности фрагментов
-            fragment_duration = settings_dict.get("fragment_duration", 30)
+            # Create fragments from this chunk
+            chunk_title = settings_dict.get('title', '')
+            add_part_numbers = settings_dict.get("add_part_numbers", False)
             
-            try:
-                # Получаем информацию о видео
-                video_info = chunk_processor.get_video_info(processed_path)
-                total_duration = video_info['duration']
-                
-                # Для очень коротких видео (меньше 10 секунд) всегда создавать один фрагмент
-                if total_duration < 10:
-                    logger.info(f"Video is very short ({total_duration}s), creating single fragment")
-                    fragment_filename = "fragment_001.mp4"
-                    fragment_path = os.path.join(chunk_processor.output_dir, fragment_filename)
-                    
-                    # Просто копируем обработанное видео как фрагмент
-                    import shutil
-                    shutil.copy(processed_path, fragment_path)
-                    
-                    fragment_info = {
-                        'fragment_number': 1,
-                        'filename': fragment_filename,
-                        'local_path': fragment_path,
-                        'start_time': 0,
-                        'duration': total_duration,
-                        'size_bytes': os.path.getsize(fragment_path),
-                        'title': settings_dict.get("title", "Короткий фрагмент")
-                    }
-                    fragments.append(fragment_info)
-                    logger.info(f"Created single fragment from short video: {fragment_filename}")
+            # Only add part number if explicitly enabled and multiple chunks exist
+            if len(processed_chunks) > 1 and chunk_title and add_part_numbers:
+                fragment_title = f"{chunk_title} - Часть {chunk_info['chunk_number']}"
             else:
-                    # Для обычных видео используем стандартную фрагментацию
-                    # Вычисляем количество фрагментов
-                    if total_duration < fragment_duration:
-                        num_fragments = 1
-                    else:
-                        num_fragments = int(total_duration // fragment_duration)
-                    
-                    # Всегда создаем хотя бы один фрагмент
-                    if num_fragments == 0 and total_duration > 0:
-                        logger.warning(f"Video duration ({total_duration}s) is less than fragment duration ({fragment_duration}s). Creating one fragment.")
-                        num_fragments = 1
-                    
-                    logger.info(f"Creating {num_fragments} fragments from processed video with duration {total_duration}s")
-                    
-                    for i in range(num_fragments):
-                        start_time = i * fragment_duration
-                        
-                        # Use total video duration if it's shorter than a fragment
-                        if total_duration < fragment_duration:
-                            actual_duration = total_duration
-                        else:
-                            # ALWAYS use the EXACT fragment_duration
-                            actual_duration = fragment_duration
-                        
-                        # Safety break, though logic should prevent this
-                        if start_time >= total_duration:
-                            break
-                        
-                        fragment_filename = f"fragment_{i+1:03d}.mp4"
-                        fragment_path = os.path.join(chunk_processor.output_dir, fragment_filename)
-                        
-                        # Simple cut without re-encoding (much faster and preserves quality)
-                        cut_cmd = [
-                            'ffmpeg',
-                            '-i', processed_path,
-                            '-ss', str(start_time),
-                            '-t', str(actual_duration),
-                            '-c', 'copy',  # Copy streams without re-encoding
-                            '-avoid_negative_ts', 'make_zero',
-                            '-y',
-                            fragment_path
-                        ]
-                        
-                        # Run FFmpeg for cutting
-                        result = subprocess.run(cut_cmd, capture_output=True, text=True, check=True, timeout=28800)
-                        
-                        if os.path.exists(fragment_path):
-                            file_size = os.path.getsize(fragment_path)
-                            fragment_info = {
-                                'fragment_number': i + 1,
-                                'filename': fragment_filename,
-                                'local_path': fragment_path,
-                                'start_time': start_time,
-                                'duration': actual_duration,
-                                'size_bytes': file_size,
-                                'title': f"{settings_dict.get('title', '')} - Часть {i+1}" if settings_dict.get('title') else f"Фрагмент {i+1}"
-                            }
-                            fragments.append(fragment_info)
-                            logger.info(f"Created fragment {i+1}/{num_fragments} (exact {actual_duration}s): {fragment_filename}")
-            except Exception as e:
-                logger.error(f"Failed to create fragments from processed video: {e}")
-                # Если не удалось создать фрагменты, используем само обработанное видео как фрагмент
-                logger.warning("Error creating fragments, using processed video as a single fragment")
-                fragment_filename = "fragment_error_001.mp4"
-                fragment_path = os.path.join(chunk_processor.output_dir, fragment_filename)
-                
-                # Копируем файл
-                import shutil
-                shutil.copy(processed_path, fragment_path)
-                
-                # Создаем информацию о фрагменте
-                fragment_info = {
-                    'fragment_number': 1,
-                    'filename': fragment_filename,
-                    'local_path': fragment_path,
-                    'start_time': 0,
-                    'duration': 0,  # Длительность неизвестна из-за ошибки
-                    'size_bytes': os.path.getsize(fragment_path),
-                    'title': settings_dict.get("title", "Фрагмент")
-                }
-                fragments.append(fragment_info)
-                logger.info(f"Created single fragment from processed video due to error: {fragment_filename}")
-
-        # Update progress
-        with get_sync_db_session() as session:
-            task = session.get(VideoTaskModel, task_id)
-            if task:
-                task.progress = 60
-                session.commit()
+                fragment_title = chunk_title
+            
+            chunk_fragments = chunk_processor.create_fragments(
+                video_path=processed_path,
+                fragment_duration=settings_dict.get("duration", 30),
+                title=fragment_title
+            )
+            
+            # Renumber fragments globally and update paths
+            for fragment_data in chunk_fragments:
+                fragment_data['fragment_number'] = fragment_counter
+                fragment_data['chunk_number'] = chunk_info['chunk_number']
+                all_fragments.append(fragment_data)
+                fragment_counter += 1
+        
+        fragments = all_fragments
         
         # Step 5: Save fragments to database
         for fragment_data in fragments:
