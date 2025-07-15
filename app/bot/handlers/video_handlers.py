@@ -4,7 +4,8 @@ Video processing handlers for the Telegram bot.
 import uuid
 import re
 import logging
-from typing import Union
+import asyncio
+from typing import Union, List, Optional, Dict, Any
 from urllib.parse import urlparse
 
 from aiogram import Router, F, Bot
@@ -40,6 +41,8 @@ class VideoProcessingStates(StatesGroup):
     waiting_for_title = State()
     waiting_for_custom_duration = State()
     waiting_for_cookies = State()
+    batch_processing = State()  # Новое состояние для пакетной обработки
+    waiting_for_batch_files = State()  # Ожидание загрузки файлов для пакетной обработки
 
 
 @router.callback_query(VideoAction.filter(F.action == "input_url"))
@@ -652,16 +655,27 @@ async def process_title_input(message: Message, state: FSMContext) -> None:
     
     # Get current state data
     data = await state.get_data()
-    settings = data.get("settings", {})
+    is_batch = data.get("is_batch", False)
     
-    # Update title
-    settings["title"] = title
-    await state.update_data(settings=settings)
-    await state.set_state(VideoProcessingStates.configuring_settings)
-    
-    # Show updated settings
-    source = data.get("source_url", data.get("file_name", "Unknown"))
-    await show_video_settings(message, state, source)
+    if is_batch:
+        # Update batch settings
+        batch_settings = data.get("batch_settings", {})
+        batch_settings["title"] = title
+        await state.update_data(batch_settings=batch_settings)
+        await state.set_state(VideoProcessingStates.configuring_settings)
+        
+        # Return to batch settings
+        await batch_files_done(message, state)
+    else:
+        # Update regular settings
+        settings = data.get("settings", {})
+        settings["title"] = title
+        await state.update_data(settings=settings)
+        await state.set_state(VideoProcessingStates.configuring_settings)
+        
+        # Show updated settings
+        source = data.get("source_url", data.get("file_name", "Unknown"))
+        await show_video_settings(message, state, source)
 
 
 @router.callback_query(SettingsValueAction.filter(F.action == "title_set"))
@@ -1068,35 +1082,63 @@ async def cleanup_stale_tasks(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(VideoAction.filter(F.action == "batch_processing"))
-async def start_batch_processing(callback: CallbackQuery) -> None:
+async def start_batch_processing(callback: CallbackQuery, state: FSMContext) -> None:
     """
     Start batch processing mode.
     
     Args:
         callback: Callback query
+        state: FSM context
     """
+    # Инициализируем данные для пакетной обработки
+    await state.set_state(VideoProcessingStates.waiting_for_batch_files)
+    await state.update_data(
+        batch_files=[],
+        batch_settings={
+            'fragment_duration': 30,
+            'quality': '1080p',
+            'enable_subtitles': True,
+            'add_part_numbers': False,
+            'title': '',
+            'cookies': ''
+        }
+    )
+    
     text = """
 📋 <b>Пакетная обработка</b>
 
-Режим пакетной обработки позволяет обработать несколько видео одновременно.
+Отправьте мне несколько коротких видео файлов, и я обработаю их все вместе.
 
 <b>Как это работает:</b>
-1. Отправьте несколько ссылок (по одной в сообщении)
-2. Или загрузите несколько файлов
+1. Отправьте несколько видео файлов (по одному за раз)
+2. После отправки всех файлов нажмите "Готово"
 3. Настройте общие параметры обработки
 4. Запустите обработку всех видео
 
 <b>Ограничения:</b>
 • Максимум 10 видео за раз
-• Общее время обработки: до 30 минут
+• Максимальный размер каждого файла: 50MB
 • Одинаковые настройки для всех видео
 
-<i>Функция находится в разработке</i>
+<i>Отправьте первый файл или нажмите "Отмена"</i>
     """
+    
+    # Создаем клавиатуру с кнопками "Готово" и "Отмена"
+    from app.bot.keyboards.main_menu import InlineKeyboardBuilder, VideoAction, MenuAction
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="✅ Готово",
+        callback_data=VideoAction(action="batch_files_done")
+    )
+    builder.button(
+        text="❌ Отмена",
+        callback_data=MenuAction(action="video_menu")
+    )
     
     await callback.message.edit_text(
         text,
-        reply_markup=get_back_keyboard("video_menu"),
+        reply_markup=builder.as_markup(),
         parse_mode="HTML"
     )
 
@@ -1275,6 +1317,445 @@ async def skip_cookies_setting(callback: CallbackQuery, state: FSMContext) -> No
     # Show updated settings
     source = data.get("source_url", data.get("file_name", "Unknown"))
     await show_video_settings(callback, state, source)
+
+
+@router.message(VideoProcessingStates.waiting_for_batch_files, F.video | F.document)
+async def process_batch_file_upload(message: Message, state: FSMContext) -> None:
+    """
+    Process file upload in batch processing mode.
+    
+    Args:
+        message: User message with file
+        state: FSM context
+    """
+    # Get file info
+    if message.video:
+        file_info = message.video
+        file_name = f"video_{message.video.file_unique_id}.mp4"
+    elif message.document:
+        file_info = message.document
+        file_name = message.document.file_name or f"document_{message.document.file_unique_id}"
+        
+        # Check if document is a video file
+        if file_name:
+            valid_extensions = ('.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v')
+            if not file_name.lower().endswith(valid_extensions):
+                await message.answer(
+                    "❌ <b>Неподдерживаемый формат файла</b>\n\n"
+                    f"Файл: {file_name}\n\n"
+                    "Поддерживаемые форматы:\n"
+                    "• MP4, AVI, MKV, MOV\n"
+                    "• WMV, FLV, WebM, M4V",
+                    parse_mode="HTML"
+                )
+                return
+    else:
+        await message.answer(
+            "❌ Неподдерживаемый тип файла"
+        )
+        return
+    
+    # Check file size (Telegram limit is usually 50MB for bots)
+    if file_info.file_size and file_info.file_size > 50 * 1024 * 1024:
+        await message.answer(
+            "❌ <b>Файл слишком большой</b>\n\n"
+            f"Размер файла: {file_info.file_size / (1024*1024):.1f} MB\n"
+            "Максимальный размер: 50 MB\n\n"
+            "Пожалуйста, сожмите видео или используйте ссылку на видео.",
+            parse_mode="HTML"
+        )
+        return
+    
+    # Get current batch files
+    data = await state.get_data()
+    batch_files = data.get("batch_files", [])
+    
+    # Check if we already have 10 files
+    if len(batch_files) >= 10:
+        await message.answer(
+            "❌ <b>Достигнут лимит файлов</b>\n\n"
+            "Вы можете загрузить максимум 10 файлов за раз.\n"
+            "Нажмите 'Готово' для продолжения с текущими файлами.",
+            parse_mode="HTML"
+        )
+        return
+    
+    # Add file to batch
+    batch_files.append({
+        "file_id": file_info.file_id,
+        "file_name": file_name,
+        "file_size": file_info.file_size
+    })
+    
+    # Update state data
+    await state.update_data(batch_files=batch_files)
+    
+    # Create keyboard with "Done" button
+    from app.bot.keyboards.main_menu import InlineKeyboardBuilder, VideoAction, MenuAction
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="✅ Готово",
+        callback_data=VideoAction(action="batch_files_done")
+    )
+    builder.button(
+        text="❌ Отмена",
+        callback_data=MenuAction(action="video_menu")
+    )
+    
+    # Send confirmation
+    await message.answer(
+        f"✅ <b>Файл добавлен в очередь</b>\n\n"
+        f"Файл: {file_name}\n"
+        f"Размер: {file_info.file_size / (1024*1024):.1f} MB\n\n"
+        f"<b>Всего файлов в очереди:</b> {len(batch_files)}/10\n\n"
+        f"Отправьте еще файлы или нажмите 'Готово' для продолжения.",
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(VideoAction.filter(F.action == "batch_files_done"))
+async def batch_files_done(callback: CallbackQuery, state: FSMContext) -> None:
+    """
+    Handle batch files done button.
+    
+    Args:
+        callback: Callback query
+        state: FSM context
+    """
+    # Get batch files
+    data = await state.get_data()
+    batch_files = data.get("batch_files", [])
+    
+    # Check if we have any files
+    if not batch_files:
+        await callback.message.edit_text(
+            "❌ <b>Нет файлов для обработки</b>\n\n"
+            "Вы не добавили ни одного файла в очередь.\n"
+            "Пожалуйста, отправьте хотя бы один файл.",
+            reply_markup=get_back_keyboard("video_menu"),
+            parse_mode="HTML"
+        )
+        return
+    
+    # Move to settings state
+    await state.set_state(VideoProcessingStates.configuring_settings)
+    
+    # Show settings with batch info
+    text = f"""
+⚙️ <b>Настройки пакетной обработки</b>
+
+📋 <b>Файлы в очереди:</b> {len(batch_files)}
+📊 <b>Общий размер:</b> {sum(f['file_size'] for f in batch_files) / (1024*1024):.1f} MB
+
+<b>Текущие настройки:</b>
+⏱️ Длительность фрагментов: {data['batch_settings']['fragment_duration']} сек
+📊 Качество: {data['batch_settings']['quality']}
+📝 Субтитры: {'Включены' if data['batch_settings']['enable_subtitles'] else 'Отключены'}
+📋 Заголовок: {data['batch_settings'].get('title', '') or 'Не задан'}
+🔢 Нумерация частей: {'Включена' if data['batch_settings'].get('add_part_numbers', False) else 'Отключена'}
+
+<b>Результат:</b>
+🎬 Профессиональные шортсы с размытым фоном
+📱 Формат 9:16 для TikTok/YouTube Shorts
+🎯 Анимированные субтитры по словам
+
+Настройте параметры обработки или нажмите "Начать обработку" для запуска с текущими настройками.
+    """
+    
+    # Create settings keyboard
+    from app.bot.keyboards.main_menu import InlineKeyboardBuilder, SettingsValueAction, VideoAction
+    
+    builder = InlineKeyboardBuilder()
+    
+    # Duration settings
+    builder.button(
+        text="⏱️ 15 сек",
+        callback_data=SettingsValueAction(action="batch_duration", value="15")
+    )
+    builder.button(
+        text="⏱️ 30 сек",
+        callback_data=SettingsValueAction(action="batch_duration", value="30")
+    )
+    builder.button(
+        text="⏱️ 60 сек",
+        callback_data=SettingsValueAction(action="batch_duration", value="60")
+    )
+    
+    # Quality settings
+    builder.button(
+        text="📊 720p",
+        callback_data=SettingsValueAction(action="batch_quality", value="720p")
+    )
+    builder.button(
+        text="📊 1080p",
+        callback_data=SettingsValueAction(action="batch_quality", value="1080p")
+    )
+    
+    # Subtitle settings
+    subtitles_text = "📝 Субтитры: ВКЛ" if data['batch_settings'].get('enable_subtitles', True) else "📝 Субтитры: ВЫКЛ"
+    builder.button(
+        text=subtitles_text,
+        callback_data=SettingsValueAction(action="batch_subtitles", value="toggle")
+    )
+    
+    # Title setting
+    builder.button(
+        text="📋 Заголовок",
+        callback_data=SettingsValueAction(action="batch_title", value="set")
+    )
+    
+    # Confirm button
+    builder.button(
+        text="✅ Начать обработку",
+        callback_data=VideoAction(action="start_batch_processing")
+    )
+    
+    # Back button
+    builder.button(
+        text="⬅️ Назад",
+        callback_data=VideoAction(action="batch_processing")
+    )
+    
+    # Arrange buttons
+    builder.adjust(3, 2, 1, 1, 1, 1)
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(SettingsValueAction.filter(F.action == "batch_duration"))
+async def update_batch_duration_setting(callback: CallbackQuery, callback_data: SettingsValueAction, state: FSMContext) -> None:
+    """
+    Update batch duration setting.
+    
+    Args:
+        callback: Callback query
+        callback_data: Settings value action data
+        state: FSM context
+    """
+    # Get current settings
+    data = await state.get_data()
+    batch_settings = data.get("batch_settings", {})
+    
+    # Update duration setting
+    duration = int(callback_data.value)
+    batch_settings["fragment_duration"] = duration
+    
+    # Update state data
+    await state.update_data(batch_settings=batch_settings)
+    
+    # Show updated settings
+    await batch_files_done(callback, state)
+    
+    # Show notification
+    await callback.answer(f"⏱️ Длительность фрагментов: {duration} сек")
+
+
+@router.callback_query(SettingsValueAction.filter(F.action == "batch_quality"))
+async def update_batch_quality_setting(callback: CallbackQuery, callback_data: SettingsValueAction, state: FSMContext) -> None:
+    """
+    Update batch quality setting.
+    
+    Args:
+        callback: Callback query
+        callback_data: Settings value action data
+        state: FSM context
+    """
+    # Get current settings
+    data = await state.get_data()
+    batch_settings = data.get("batch_settings", {})
+    
+    # Update quality setting
+    quality = callback_data.value
+    batch_settings["quality"] = quality
+    
+    # Update state data
+    await state.update_data(batch_settings=batch_settings)
+    
+    # Show updated settings
+    await batch_files_done(callback, state)
+    
+    # Show notification
+    await callback.answer(f"📊 Качество: {quality}")
+
+
+@router.callback_query(SettingsValueAction.filter(F.action == "batch_subtitles"))
+async def toggle_batch_subtitles_setting(callback: CallbackQuery, state: FSMContext) -> None:
+    """
+    Toggle batch subtitles setting.
+    
+    Args:
+        callback: Callback query
+        state: FSM context
+    """
+    # Get current settings
+    data = await state.get_data()
+    batch_settings = data.get("batch_settings", {})
+    
+    # Toggle subtitles setting
+    enable_subtitles = not batch_settings.get("enable_subtitles", True)
+    batch_settings["enable_subtitles"] = enable_subtitles
+    
+    # Update state data
+    await state.update_data(batch_settings=batch_settings)
+    
+    # Show updated settings
+    await batch_files_done(callback, state)
+    
+    # Show notification
+    status = "включены" if enable_subtitles else "отключены"
+    await callback.answer(f"📝 Субтитры {status}")
+
+
+@router.callback_query(SettingsValueAction.filter(F.action == "batch_title"))
+async def set_batch_title_setting(callback: CallbackQuery, state: FSMContext) -> None:
+    """
+    Set batch title setting.
+    
+    Args:
+        callback: Callback query
+        state: FSM context
+    """
+    # Save current state data
+    await state.set_state(VideoProcessingStates.waiting_for_title)
+    await state.update_data(is_batch=True)
+    
+    # Show title input prompt
+    await callback.message.edit_text(
+        "📝 <b>Введите заголовок для всех видео</b>\n\n"
+        "Заголовок будет добавлен ко всем обрабатываемым видео.\n"
+        "Максимальная длина: 50 символов.\n\n"
+        "<i>Отправьте текст следующим сообщением или нажмите 'Отмена'</i>",
+        reply_markup=get_cancel_keyboard(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(VideoAction.filter(F.action == "start_batch_processing"))
+async def start_batch_processing_execution(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    """
+    Start batch video processing execution.
+    
+    Args:
+        callback: Callback query
+        state: FSM context
+        bot: Bot instance
+    """
+    user_id = callback.from_user.id
+    data = await state.get_data()
+    batch_files = data.get("batch_files", [])
+    batch_settings = data.get("batch_settings", {})
+    
+    if not batch_files:
+        await callback.message.edit_text(
+            "❌ <b>Нет файлов для обработки</b>\n\n"
+            "Вы не добавили ни одного файла в очередь.\n"
+            "Пожалуйста, отправьте хотя бы один файл.",
+            reply_markup=get_back_keyboard("video_menu"),
+            parse_mode="HTML"
+        )
+        return
+    
+    # Create task IDs for each file
+    task_ids = []
+    
+    try:
+        async with get_db_session() as session:
+            # Get or create user
+            user = await session.get(User, user_id)
+            if not user:
+                user = User(
+                    id=user_id,
+                    username=callback.from_user.username,
+                    first_name=callback.from_user.first_name,
+                    last_name=callback.from_user.last_name
+                )
+                session.add(user)
+            
+            # Create tasks for each file
+            for file_info in batch_files:
+                task_id = str(uuid.uuid4())
+                
+                # Create video task
+                video_task = VideoTask(
+                    id=task_id,
+                    user_id=user_id,
+                    original_filename=file_info["file_name"],
+                    status=VideoStatus.PENDING,
+                    settings=batch_settings,
+                    progress=0
+                )
+                session.add(video_task)
+                task_ids.append(task_id)
+            
+            await session.commit()
+    
+    except Exception as e:
+        logger.error(f"Failed to create batch tasks: {e}")
+        await callback.message.edit_text(
+            "❌ <b>Ошибка создания задач</b>\n\n"
+            f"Произошла ошибка при создании задач: {str(e)}",
+            reply_markup=get_back_keyboard("video_menu"),
+            parse_mode="HTML"
+        )
+        return
+    
+    # Start processing workflow
+    await state.set_state(VideoProcessingStates.processing)
+    
+    text = f"""
+🚀 <b>Пакетная обработка запущена!</b>
+
+📋 Количество файлов: {len(batch_files)}
+⏱️ Ориентировочное время: {len(batch_files) * 2}-{len(batch_files) * 4} минут
+
+<b>Этапы обработки:</b>
+1. ⏳ Загрузка файлов...
+2. ⏳ Полная обработка в формат Shorts...
+3. ⏳ Нарезка на фрагменты...
+4. ⏳ Загрузка в Google Drive...
+
+<b>ID задач:</b>
+"""
+    
+    # Add task IDs to message
+    for i, task_id in enumerate(task_ids):
+        text += f"{i+1}. <code>{task_id}</code>\n"
+    
+    text += "\nЯ уведомлю вас о завершении обработки каждого файла."
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_back_keyboard("video_menu"),
+        parse_mode="HTML"
+    )
+    
+    # Start processing each file
+    from app.workers.video_tasks import process_uploaded_file_chain
+    
+    for i, (task_id, file_info) in enumerate(zip(task_ids, batch_files)):
+        # Устанавливаем жесткие лимиты времени
+        soft_limit = 28800  # 8 часов
+        hard_limit = 28800  # 8 часов
+        
+        # Передаём ffmpeg_timeout в settings
+        settings_copy = batch_settings.copy()
+        settings_copy['ffmpeg_timeout'] = 28800
+        
+        # Запускаем обработку файла
+        process_uploaded_file_chain.apply_async(
+            args=[task_id, file_info["file_id"], file_info["file_name"], file_info["file_size"], settings_copy],
+            soft_time_limit=soft_limit,
+            time_limit=hard_limit
+        )
+        
+        # Добавляем небольшую задержку между запусками задач
+        await asyncio.sleep(1)
 
 
 def is_valid_video_url(url: str) -> bool:
