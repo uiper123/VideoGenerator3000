@@ -472,6 +472,13 @@ def process_uploaded_file_chain(self, task_id: str, file_id: str, file_name: str
                 title=fragment_title
             )
             
+            # Если не удалось создать ни одного фрагмента (например, короткое видео) — используем create_fragments_from_processed
+            if not chunk_fragments:
+                logger.warning(f"No fragments created from chunk {chunk_info['chunk_number']}, trying create_fragments_from_processed...")
+                chunk_fragments = chunk_processor.create_fragments_from_processed(
+                    processed_path,
+                    fragment_duration=settings_dict.get("fragment_duration", 30)
+                )
             # Renumber fragments globally and update paths
             for fragment_data in chunk_fragments:
                 fragment_data['fragment_number'] = fragment_counter

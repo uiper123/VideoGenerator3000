@@ -1685,3 +1685,84 @@ class VideoProcessor:
         logger.info(f"Сгенерирован файл ссылок для скачивания: {output_path}")
         return output_path
  
+    def create_fragments_from_processed(self, video_path: str, fragment_duration: int = 30) -> List[Dict[str, Any]]:
+        """
+        Create fragments from already processed video.
+        Args:
+            video_path: Path to processed video
+            fragment_duration: Duration of each fragment in seconds
+        Returns:
+            List of fragment information
+        """
+        import shutil
+        if not os.path.exists(video_path):
+            logger.error(f"Processed video file not found: {video_path}")
+            return []
+        try:
+            video_info = self.get_video_info(video_path)
+            total_duration = video_info['duration']
+            # Для очень коротких видео (меньше 10 секунд) всегда создавать один фрагмент
+            if total_duration < 10:
+                logger.info(f"Video is very short ({total_duration}s), creating single fragment")
+                fragment_filename = "fragment_001.mp4"
+                fragment_path = os.path.join(self.output_dir, fragment_filename)
+                shutil.copy(video_path, fragment_path)
+                fragment_info = {
+                    'fragment_number': 1,
+                    'filename': fragment_filename,
+                    'local_path': fragment_path,
+                    'start_time': 0,
+                    'duration': total_duration,
+                    'size_bytes': os.path.getsize(fragment_path),
+                    'title': "Короткий фрагмент"
+                }
+                return [fragment_info]
+            # Обычная логика для длинных видео
+            if total_duration < fragment_duration:
+                num_fragments = 1
+            else:
+                num_fragments = int(total_duration // fragment_duration)
+            if num_fragments == 0 and total_duration > 0:
+                logger.warning(f"Video duration ({total_duration}s) is less than fragment duration ({fragment_duration}s). Creating one fragment.")
+                num_fragments = 1
+            logger.info(f"Creating {num_fragments} fragments from processed video with duration {total_duration}s")
+            fragments = []
+            for i in range(num_fragments):
+                start_time = i * fragment_duration
+                if total_duration < fragment_duration:
+                    actual_duration = total_duration
+                else:
+                    actual_duration = fragment_duration
+                if start_time >= total_duration:
+                    break
+                fragment_filename = f"fragment_{i+1:03d}.mp4"
+                fragment_path = os.path.join(self.output_dir, fragment_filename)
+                cut_cmd = [
+                    'ffmpeg',
+                    '-i', video_path,
+                    '-ss', str(start_time),
+                    '-t', str(actual_duration),
+                    '-c', 'copy',
+                    '-avoid_negative_ts', 'make_zero',
+                    '-y',
+                    fragment_path
+                ]
+                result = subprocess.run(cut_cmd, capture_output=True, text=True, check=True, timeout=28800)
+                if os.path.exists(fragment_path):
+                    file_size = os.path.getsize(fragment_path)
+                    fragment_info = {
+                        'fragment_number': i + 1,
+                        'filename': fragment_filename,
+                        'local_path': fragment_path,
+                        'start_time': start_time,
+                        'duration': actual_duration,
+                        'size_bytes': file_size,
+                        'title': f"Фрагмент {i+1}"
+                    }
+                    fragments.append(fragment_info)
+                    logger.info(f"Created fragment {i+1}/{num_fragments} (exact {actual_duration}s): {fragment_filename}")
+            return fragments
+        except Exception as e:
+            logger.error(f"Failed to create fragments from processed video: {e}")
+            return []
+ 
