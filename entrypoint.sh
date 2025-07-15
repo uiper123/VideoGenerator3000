@@ -1,21 +1,32 @@
-#!/bin/sh
-
-# Exit immediately if a command exits with a non-zero status
+#!/bin/bash
 set -e
 
-# The first argument to the script is the type of service to run
-SERVICE_TYPE="$1"
+# Ограничение количества потоков для библиотек
+export OMP_NUM_THREADS=4
+export OPENBLAS_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+export VECLIB_MAXIMUM_THREADS=4
+export NUMEXPR_NUM_THREADS=4
 
-if [ "$SERVICE_TYPE" = "bot" ]; then
-    echo "Starting Telegram Bot..."
+# Ограничение для faster-whisper
+export WHISPER_CPU_THREADS=4
+export WHISPER_NUM_WORKERS=2
+
+# Определяем команду для запуска
+if [ "$1" = "bot" ]; then
+    echo "Starting Telegram bot..."
     exec python run_bot.py
-elif [ "$SERVICE_TYPE" = "worker" ]; then
-    echo "Starting Celery Worker..."
-    exec celery -A app.workers.celery_app.celery_app worker -l info
-elif [ "$SERVICE_TYPE" = "beat" ]; then
-    echo "Starting Celery Beat..."
-    exec celery -A app.workers.celery_app.celery_app beat -l info
+elif [ "$1" = "worker" ]; then
+    echo "Starting Celery worker..."
+    exec celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
+elif [ "$1" = "beat" ]; then
+    echo "Starting Celery beat..."
+    exec celery -A app.workers.celery_app beat --loglevel=info
+elif [ "$1" = "flower" ]; then
+    echo "Starting Flower..."
+    exec celery -A app.workers.celery_app flower --port=5555
 else
-    echo "Error: Unknown service type '$SERVICE_TYPE'"
+    echo "Command not recognized: $1"
+    echo "Available commands: bot, worker, beat, flower"
     exit 1
 fi 

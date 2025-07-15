@@ -5,6 +5,13 @@ import os
 from celery import Celery
 from kombu import Exchange, Queue
 
+# Ограничение количества потоков для библиотек
+os.environ["OMP_NUM_THREADS"] = "4"
+os.environ["OPENBLAS_NUM_THREADS"] = "4"
+os.environ["MKL_NUM_THREADS"] = "4"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "4"
+os.environ["NUMEXPR_NUM_THREADS"] = "4"
+
 from app.config.settings import settings
 
 # Create Celery application instance
@@ -39,9 +46,10 @@ celery_app.conf.update(
     result_persistent=True,
     
     # Worker settings
-    worker_max_tasks_per_child=1000,
+    worker_max_tasks_per_child=100,  # Уменьшено с 1000 до 100
     worker_disable_rate_limits=False,
     worker_prefetch_multiplier=1,
+    worker_concurrency=2,  # Ограничение количества одновременных задач
     
     # Task routing
     task_routes={
@@ -56,20 +64,17 @@ celery_app.conf.update(
     task_queues=[
         Queue('default', Exchange('default'), routing_key='default'),
         Queue('video_download', Exchange('video'), routing_key='video.download'),
-        Queue('video_processing', Exchange('video'), routing_key='video.process'),
+        Queue('video_processing', Exchange('video'), routing_key='video.process', queue_arguments={'x-max-priority': 10}),
         Queue('uploads', Exchange('uploads'), routing_key='uploads.drive'),
     ],
     
     # Default queue settings
     task_default_queue='default',
-    task_default_exchange_type='direct',
-    task_default_routing_key='default',
     
-    # Task annotations for rate limiting
+    # Task rate limits
     task_annotations={
-        'app.workers.video_tasks.download_video': {'rate_limit': '5/m'},
-        'app.workers.upload_tasks.upload_to_drive': {'rate_limit': '10/m'},
-        'app.workers.upload_tasks.update_spreadsheet': {'rate_limit': '60/m'},
+        'app.workers.video_tasks.process_video_chain_optimized': {'rate_limit': '2/h'},
+        'app.workers.video_tasks.process_uploaded_file_chain': {'rate_limit': '2/h'},
     },
     
     # Beat schedule for periodic tasks

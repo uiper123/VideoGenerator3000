@@ -9,7 +9,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOME=/tmp \
     HF_HOME=/tmp/.cache/huggingface \
     TRANSFORMERS_CACHE=/tmp/.cache/transformers \
-    NUMBA_CACHE_DIR=/tmp/.cache/numba
+    NUMBA_CACHE_DIR=/tmp/.cache/numba \
+    OMP_NUM_THREADS=4 \
+    OPENBLAS_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    VECLIB_MAXIMUM_THREADS=4 \
+    NUMEXPR_NUM_THREADS=4 \
+    WHISPER_CPU_THREADS=4 \
+    WHISPER_NUM_WORKERS=2
 
 # Set work directory
 WORKDIR /app
