@@ -360,9 +360,13 @@ def process_uploaded_file_chain(self, task_id: str, file_id: str, file_name: str
             # Исправлено: передаем все необходимые аргументы
             download_result = download_telegram_file_sync(task_id, file_id, file_name, file_size, settings_dict)
             
-            if not download_result["success"]:
-                raise RuntimeError(f"File download failed: {download_result.get('error', 'unknown error')}")
+            # Исправлено: проверяем наличие local_path в результате вместо ключа success
+            if not download_result or not download_result.get("local_path") or not os.path.exists(download_result.get("local_path")):
+                error_msg = download_result.get("error", "unknown error") if download_result else "Download failed"
+                raise RuntimeError(f"File download failed: {error_msg}")
                 
+            # Обновляем local_path из результата загрузки
+            local_path = download_result["local_path"]
             logger.info(f"File downloaded successfully: {local_path}")
             
             # Step 2: Split video into chunks if it's long (to avoid timeouts)
