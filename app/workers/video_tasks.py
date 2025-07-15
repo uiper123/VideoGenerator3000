@@ -548,8 +548,9 @@ def process_uploaded_file_chain(self, task_id: str, file_id: str, file_name: str
                         db_fragment = VideoFragment(
                             task_id=task_id,
                             fragment_number=i + 1,
+                            filename=os.path.basename(fragment.get("local_path", "")),
                             local_path=fragment.get("local_path", ""),
-                            drive_link=drive_links[i] if i < len(drive_links) else "",
+                            drive_url=drive_links[i] if i < len(drive_links) else None,
                             duration=fragment.get("duration", 0),
                             size_bytes=fragment.get("size_bytes", 0)
                         )
