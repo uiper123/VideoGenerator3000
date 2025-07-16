@@ -1,6 +1,7 @@
 """
 Video processing handlers for the Telegram bot.
 """
+import os
 import uuid
 import re
 import logging
@@ -1302,5 +1303,283 @@ def is_valid_video_url(url: str) -> bool:
         
         return False
         
+    except Exception:
+        return False
+# До бавляем недостающие обработчики для VideoTaskAction
+
+@router.callback_query(VideoTaskAction.filter(F.action == "refresh_status"))
+async def refresh_task_status(callback: CallbackQuery, callback_data: VideoTaskAction, bot: Bot) -> None:
+    """
+    Refresh task status and send results if completed.
+    
+    Args:
+        callback: Callback query
+        callback_data: Task action data
+        bot: Bot instance
+    """
+    task_id = callback_data.task_id
+    user_id = callback.from_user.id
+    
+    try:
+        async with get_db_session() as session:
+            # Get task from database
+            task = await session.get(VideoTask, task_id)
+            
+            if not task:
+                await callback.message.edit_text(
+                    "❌ <b>Задача не найдена</b>\n\n"
+                    "Возможно, задача была удалена или произошла ошибка.",
+                    parse_mode="HTML"
+                )
+                return
+            
+            # Check if user owns this task
+            if task.user_id != user_id:
+                await callback.answer("❌ Это не ваша задача!", show_alert=True)
+                return
+            
+            # Handle different task statuses
+            if task.status == VideoStatus.COMPLETED:
+                # Task completed - send results
+                await send_completed_task_results(callback, task, bot)
+                
+            elif task.status == VideoStatus.FAILED:
+                # Task failed
+                error_msg = task.error_message or "Неизвестная ошибка"
+                await callback.message.edit_text(
+                    f"❌ <b>Обработка завершилась с ошибкой</b>\n\n"
+                    f"📋 ID задачи: <code>{task_id}</code>\n"
+                    f"🚫 Ошибка: {error_msg}\n\n"
+                    "Попробуйте создать новую задачу.",
+                    parse_mode="HTML",
+                    reply_markup=get_back_keyboard("video_menu")
+                )
+                
+            elif task.status in [VideoStatus.DOWNLOADING, VideoStatus.PROCESSING, VideoStatus.UPLOADING]:
+                # Task still in progress
+                status_text = {
+                    VideoStatus.DOWNLOADING: "⏳ Скачивание видео...",
+                    VideoStatus.PROCESSING: "🔄 Обработка видео...",
+                    VideoStatus.UPLOADING: "📤 Загрузка в облако..."
+                }
+                
+                progress = task.progress or 0
+                await callback.message.edit_text(
+                    f"🔄 <b>Обработка в процессе</b>\n\n"
+                    f"📋 ID задачи: <code>{task_id}</code>\n"
+                    f"📊 Прогресс: {progress}%\n"
+                    f"🔄 Статус: {status_text.get(task.status, 'Обработка...')}\n\n"
+                    "Обработка может занять несколько минут.\n"
+                    "Нажмите 'Обновить статус' для проверки.",
+                    parse_mode="HTML",
+                    reply_markup=get_task_status_keyboard(task_id)
+                )
+                
+            else:
+                # Pending or unknown status
+                await callback.message.edit_text(
+                    f"⏳ <b>Задача в очереди</b>\n\n"
+                    f"📋 ID задачи: <code>{task_id}</code>\n"
+                    f"🔄 Статус: {task.status.value}\n\n"
+                    "Задача ожидает обработки.",
+                    parse_mode="HTML",
+                    reply_markup=get_task_status_keyboard(task_id)
+                )
+                
+    except Exception as e:
+        logger.error(f"Error refreshing task status {task_id}: {e}")
+        await callback.answer("❌ Ошибка при обновлении статуса", show_alert=True)
+
+
+async def send_completed_task_results(callback: CallbackQuery, task: VideoTask, bot: Bot) -> None:
+    """
+    Send completed task results to user.
+    
+    Args:
+        callback: Callback query
+        task: Completed video task
+        bot: Bot instance
+    """
+    try:
+        # Get fragments from database
+        async with get_db_session() as session:
+            from sqlalchemy import select
+            result = await session.execute(
+                select(VideoFragment).where(VideoFragment.task_id == task.id).order_by(VideoFragment.fragment_number)
+            )
+            fragments = result.scalars().all()
+        
+        if not fragments:
+            await callback.message.edit_text(
+                f"✅ <b>Обработка завершена!</b>\n\n"
+                f"📋 ID задачи: <code>{task.id}</code>\n"
+                f"⚠️ Фрагменты не найдены\n\n"
+                "Возможно, произошла ошибка при сохранении результатов.",
+                parse_mode="HTML"
+            )
+            return
+        
+        # Calculate total duration
+        total_duration = sum(f.duration for f in fragments)
+        
+        # Send completion message
+        completion_text = f"""
+✅ <b>Обработка завершена!</b>
+
+📋 ID задачи: <code>{task.id}</code>
+📊 Создано фрагментов: {len(fragments)}
+⏱️ Общая длительность: {total_duration} сек
+
+<b>Результаты:</b>
+• {len(fragments)} фрагментов в формате 9:16
+• Качественная обработка видео
+• Готово к использованию
+
+📱 Видео будет отправлено прямо в чат!
+📁 + дополнительно ссылки на Google Drive
+        """
+        
+        await callback.message.edit_text(
+            completion_text,
+            parse_mode="HTML"
+        )
+        
+        # Send each fragment as video file
+        for i, fragment in enumerate(fragments):
+            try:
+                if fragment.local_path and os.path.exists(fragment.local_path):
+                    # Send video file directly
+                    with open(fragment.local_path, 'rb') as video_file:
+                        caption = f"🎬 Фрагмент {fragment.fragment_number}/{len(fragments)}"
+                        if fragment.duration:
+                            caption += f" ({fragment.duration}с)"
+                        
+                        await bot.send_video(
+                            chat_id=callback.from_user.id,
+                            video=video_file,
+                            caption=caption,
+                            supports_streaming=True
+                        )
+                        
+                    logger.info(f"Sent fragment {fragment.fragment_number} to user {callback.from_user.id}")
+                    
+                elif fragment.drive_url:
+                    # Send Google Drive link if local file not available
+                    await bot.send_message(
+                        chat_id=callback.from_user.id,
+                        text=f"🎬 Фрагмент {fragment.fragment_number}/{len(fragments)}\n"
+                             f"📁 [Скачать с Google Drive]({fragment.drive_url})",
+                        parse_mode="Markdown"
+                    )
+                    
+            except Exception as e:
+                logger.error(f"Error sending fragment {fragment.fragment_number}: {e}")
+                # Send error message for this fragment
+                await bot.send_message(
+                    chat_id=callback.from_user.id,
+                    text=f"❌ Ошибка отправки фрагмента {fragment.fragment_number}: {str(e)[:100]}"
+                )
+        
+        # Send summary with Google Drive links if available
+        if any(f.drive_url for f in fragments):
+            drive_links_text = "📁 <b>Ссылки на Google Drive:</b>\n\n"
+            for fragment in fragments:
+                if fragment.drive_url:
+                    drive_links_text += f"🎬 Фрагмент {fragment.fragment_number}: [Скачать]({fragment.drive_url})\n"
+            
+            await bot.send_message(
+                chat_id=callback.from_user.id,
+                text=drive_links_text,
+                parse_mode="HTML",
+                disable_web_page_preview=True
+            )
+        
+        # Clean up local files after sending
+        for fragment in fragments:
+            if fragment.local_path and os.path.exists(fragment.local_path):
+                try:
+                    os.remove(fragment.local_path)
+                    logger.info(f"Cleaned up fragment file: {fragment.local_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up fragment file {fragment.local_path}: {e}")
+        
+    except Exception as e:
+        logger.error(f"Error sending completed task results: {e}")
+        await callback.message.edit_text(
+            f"✅ <b>Обработка завершена!</b>\n\n"
+            f"📋 ID задачи: <code>{task.id}</code>\n"
+            f"❌ Ошибка отправки результатов: {str(e)[:100]}\n\n"
+            "Попробуйте обновить статус еще раз.",
+            parse_mode="HTML",
+            reply_markup=get_task_status_keyboard(task.id, can_cancel=False)
+        )
+
+
+@router.callback_query(VideoTaskAction.filter(F.action == "cancel_task"))
+async def cancel_task(callback: CallbackQuery, callback_data: VideoTaskAction) -> None:
+    """
+    Cancel a video processing task.
+    
+    Args:
+        callback: Callback query
+        callback_data: Task action data
+    """
+    task_id = callback_data.task_id
+    user_id = callback.from_user.id
+    
+    try:
+        async with get_db_session() as session:
+            task = await session.get(VideoTask, task_id)
+            
+            if not task:
+                await callback.answer("❌ Задача не найдена!", show_alert=True)
+                return
+            
+            if task.user_id != user_id:
+                await callback.answer("❌ Это не ваша задача!", show_alert=True)
+                return
+            
+            if task.status in [VideoStatus.COMPLETED, VideoStatus.FAILED]:
+                await callback.answer("❌ Задача уже завершена!", show_alert=True)
+                return
+            
+            # Update task status to failed
+            task.status = VideoStatus.FAILED
+            task.error_message = "Отменено пользователем"
+            await session.commit()
+            
+            await callback.message.edit_text(
+                f"❌ <b>Задача отменена</b>\n\n"
+                f"📋 ID задачи: <code>{task_id}</code>\n"
+                f"🚫 Статус: Отменено пользователем\n\n"
+                "Вы можете создать новую задачу.",
+                parse_mode="HTML",
+                reply_markup=get_back_keyboard("video_menu")
+            )
+            
+    except Exception as e:
+        logger.error(f"Error canceling task {task_id}: {e}")
+        await callback.answer("❌ Ошибка при отмене задачи", show_alert=True)
+
+
+def is_valid_video_url(url: str) -> bool:
+    """
+    Validate if URL is from supported video platform.
+    
+    Args:
+        url: URL to validate
+        
+    Returns:
+        bool: True if URL is valid
+    """
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        
+        # Remove www. prefix
+        if domain.startswith('www.'):
+            domain = domain[4:]
+        
+        return any(source in domain for source in SUPPORTED_SOURCES)
     except Exception:
         return False
