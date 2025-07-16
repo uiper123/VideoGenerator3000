@@ -44,7 +44,7 @@ class SubtitleStyle(str, Enum):
 
 # Video processing constants
 MAX_FRAGMENT_DURATION = 60  # seconds
-MIN_FRAGMENT_DURATION = 15  # seconds
+MIN_FRAGMENT_DURATION = 5   # seconds - уменьшено для обработки коротких видео
 DEFAULT_FRAGMENT_DURATION = 30  # seconds
 
 # Shorts format specifications

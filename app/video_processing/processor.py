@@ -212,20 +212,45 @@ class VideoProcessor:
         video_info = self.get_video_info(video_path)
         total_duration = video_info['duration']
         
-        # Calculate how many FULL fragments we can create with EXACT duration
-        num_full_fragments = int(total_duration // fragment_duration)
+        # Special case: if video is shorter than MIN_FRAGMENT_DURATION, create one fragment with full video
+        if total_duration < MIN_FRAGMENT_DURATION:
+            logger.info(f"Video is {total_duration}s, shorter than minimum fragment duration. Creating single fragment.")
+            total_fragments = 1
+            num_full_fragments = 0
+            create_remainder_fragment = True
+            remainder = total_duration
+        else:
+            # Calculate how many FULL fragments we can create with EXACT duration
+            num_full_fragments = int(total_duration // fragment_duration)
+            
+            # Check if there's a remainder that's worth creating a fragment from
+            remainder = total_duration % fragment_duration
+            create_remainder_fragment = remainder >= MIN_FRAGMENT_DURATION
+            
+            # Total fragments to create
+            total_fragments = num_full_fragments + (1 if create_remainder_fragment else 0)
         
         fragments = []
         
-        for i in range(num_full_fragments):
-            start_time = i * fragment_duration
-            
-            # ALWAYS use the EXACT fragment_duration (строго заданная длительность)
-            actual_duration = fragment_duration
-            
-            # Ensure we don't exceed video length
-            if start_time + actual_duration > total_duration:
-                break
+        for i in range(total_fragments):
+            # For short videos (less than MIN_FRAGMENT_DURATION), process the entire video
+            if total_duration < MIN_FRAGMENT_DURATION:
+                start_time = 0
+                actual_duration = total_duration
+            else:
+                start_time = i * fragment_duration
+                
+                # For the last fragment, use remainder duration if it exists
+                if i == num_full_fragments and create_remainder_fragment:
+                    actual_duration = remainder
+                else:
+                    actual_duration = fragment_duration
+                
+                # Ensure we don't exceed video length
+                if start_time + actual_duration > total_duration:
+                    actual_duration = total_duration - start_time
+                    if actual_duration < MIN_FRAGMENT_DURATION and total_duration >= MIN_FRAGMENT_DURATION:
+                        break
 
             fragment_filename = f"fragment_{i+1:03d}_{uuid.uuid4().hex[:4]}.mp4"
             fragment_path = os.path.join(self.output_dir, fragment_filename)
@@ -627,31 +652,49 @@ class VideoProcessor:
         video_info = self.get_video_info(video_path)
         total_duration = video_info['duration']
         
-        if total_duration < fragment_duration:
-            # If video is shorter than fragment duration, create one fragment
+        # Special case: if video is shorter than MIN_FRAGMENT_DURATION, create one fragment with full video
+        if total_duration < MIN_FRAGMENT_DURATION:
+            logger.info(f"Video is {total_duration}s, shorter than minimum fragment duration. Creating single fragment with subtitles.")
             num_fragments = 1
-            fragment_duration = int(total_duration)
+            actual_fragment_duration = total_duration
+        elif total_duration < fragment_duration:
+            # If video is shorter than requested fragment duration but longer than minimum, create one fragment
+            num_fragments = 1
+            actual_fragment_duration = total_duration
         else:
-            num_fragments = int(total_duration // fragment_duration)
-            if total_duration % fragment_duration > 10:  # If remainder > 10 seconds, create extra fragment
-                num_fragments += 1
+            # Calculate how many FULL fragments we can create with EXACT duration
+            num_full_fragments = int(total_duration // fragment_duration)
+            
+            # Check if there's a remainder that's worth creating a fragment from
+            remainder = total_duration % fragment_duration
+            create_remainder_fragment = remainder >= MIN_FRAGMENT_DURATION
+            
+            # Total fragments to create
+            num_fragments = num_full_fragments + (1 if create_remainder_fragment else 0)
+            actual_fragment_duration = fragment_duration
         
         fragments = []
         
         for i in range(num_fragments):
-            start_time = i * fragment_duration
-            
-            # Calculate end time for this fragment
-            if i == num_fragments - 1:
-                # Last fragment - use remaining duration
+            # For short videos (less than MIN_FRAGMENT_DURATION), process the entire video
+            if total_duration < MIN_FRAGMENT_DURATION:
+                start_time = 0
+                actual_duration = total_duration
                 end_time = total_duration
-                actual_duration = total_duration - start_time
             else:
-                end_time = start_time + fragment_duration
-                actual_duration = fragment_duration
+                start_time = i * actual_fragment_duration
+                
+                # Calculate end time for this fragment
+                if i == num_fragments - 1:
+                    # Last fragment - use remaining duration
+                    end_time = total_duration
+                    actual_duration = total_duration - start_time
+                else:
+                    end_time = start_time + actual_fragment_duration
+                    actual_duration = actual_fragment_duration
             
-            # Skip fragments that are too short
-            if actual_duration < 5:  # Skip fragments shorter than 5 seconds
+            # Skip fragments that are too short (but not for videos shorter than MIN_FRAGMENT_DURATION)
+            if actual_duration < 5 and total_duration >= MIN_FRAGMENT_DURATION:
                 continue
             
             fragment_filename = f"fragment_{i+1:03d}.mp4"
