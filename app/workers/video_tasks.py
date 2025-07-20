@@ -1266,6 +1266,7 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
     try:
         import asyncio
         import tempfile
+        import os
         from aiogram import Bot
         from aiogram.types import FSInputFile
         from app.config.settings import settings
@@ -1499,7 +1500,6 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                     
                     # Clean up temp file
                     try:
-                        import os
                         os.unlink(links_file_path)
                         logger.info(f"Cleaned up temp file: {links_file_path}")
                     except Exception as cleanup_error:
@@ -1572,7 +1572,6 @@ def send_completion_notification(user_id: int, task_id: str, fragments_count: in
                 logger.error(f"Failed to send notification to user {user_id}: {e}")
                 if links_file_path:
                     try:
-                        import os
                         os.unlink(links_file_path)
                     except:
                         pass
