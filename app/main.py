@@ -1,12 +1,16 @@
 """
-Main application entry point for Video Bot.
+Main application entry point for Video Bot with integrated Celery Worker.
 """
 import asyncio
 import logging
 import sys
-from contextlib import asynccontextmanager
+import threading
+import subprocess
+import time
 import os
 import json
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -48,6 +52,91 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Global variable to track Celery worker process
+celery_worker_process = None
+
+
+def start_celery_worker():
+    """Start Celery worker in background thread."""
+    global celery_worker_process
+    
+    def run_celery():
+        """Run Celery worker process."""
+        try:
+            # Create logs directory
+            logs_dir = Path("logs")
+            logs_dir.mkdir(exist_ok=True)
+            
+            # Celery worker command
+            cmd = [
+                sys.executable, "-m", "celery",
+                "-A", "app.workers.celery_app",
+                "worker",
+                "--loglevel=info",
+                "--concurrency=1",
+                "--logfile=logs/celery_worker.log",
+                "--pidfile=logs/celery_worker.pid",
+                "--hostname=worker@%h"
+            ]
+            
+            logger.info("🔧 Starting Celery Worker in background...")
+            logger.info(f"Command: {' '.join(cmd)}")
+            
+            # Start Celery worker process
+            global celery_worker_process
+            celery_worker_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=os.getcwd()
+            )
+            
+            logger.info(f"✅ Celery Worker started with PID: {celery_worker_process.pid}")
+            
+            # Wait for process to complete or be terminated
+            celery_worker_process.wait()
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to start Celery Worker: {e}")
+    
+    # Start Celery in background thread
+    celery_thread = threading.Thread(target=run_celery, daemon=True)
+    celery_thread.start()
+    
+    # Give worker time to start
+    time.sleep(3)
+    
+    # Check if worker started successfully
+    if celery_worker_process and celery_worker_process.poll() is None:
+        logger.info("✅ Celery Worker is running in background")
+        return True
+    else:
+        logger.error("❌ Celery Worker failed to start")
+        return False
+
+
+def stop_celery_worker():
+    """Stop Celery worker process."""
+    global celery_worker_process
+    
+    if celery_worker_process:
+        try:
+            logger.info("🛑 Stopping Celery Worker...")
+            celery_worker_process.terminate()
+            
+            # Wait for graceful shutdown
+            try:
+                celery_worker_process.wait(timeout=10)
+                logger.info("✅ Celery Worker stopped gracefully")
+            except subprocess.TimeoutExpired:
+                logger.warning("⚠️ Celery Worker didn't stop gracefully, killing...")
+                celery_worker_process.kill()
+                celery_worker_process.wait()
+                logger.info("💀 Celery Worker killed")
+                
+        except Exception as e:
+            logger.error(f"❌ Error stopping Celery Worker: {e}")
 
 
 async def setup_bot_commands(bot: Bot) -> None:
@@ -251,8 +340,21 @@ async def main() -> None:
     # Create Google credentials file at startup
     setup_google_credentials()
     
-    # For now, always use polling mode
-    await main_polling()
+    # Start Celery Worker in background
+    logger.info("🚀 Starting VideoGenerator3000 with integrated Celery Worker...")
+    celery_started = start_celery_worker()
+    
+    if celery_started:
+        logger.info("✅ Celery Worker started successfully")
+    else:
+        logger.warning("⚠️ Celery Worker failed to start, continuing without background processing")
+    
+    try:
+        # Run bot in polling mode
+        await main_polling()
+    finally:
+        # Stop Celery Worker on shutdown
+        stop_celery_worker()
 
 
 if __name__ == "__main__":

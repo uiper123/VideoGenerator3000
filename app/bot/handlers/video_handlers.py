@@ -620,7 +620,13 @@ async def process_custom_duration_input(message: Message, state: FSMContext) -> 
     
     # Get current state data
     data = await state.get_data()
-    settings = data.get("settings", {})
+    settings = data.get("settings", {
+        "fragment_duration": 30,
+        "quality": "1080p",
+        "enable_subtitles": True,
+        "title": "",
+        "add_part_numbers": False
+    })
     
     # Update duration
     settings["fragment_duration"] = duration
@@ -653,7 +659,13 @@ async def process_title_input(message: Message, state: FSMContext) -> None:
     
     # Get current state data
     data = await state.get_data()
-    settings = data.get("settings", {})
+    settings = data.get("settings", {
+        "fragment_duration": 30,
+        "quality": "1080p",
+        "enable_subtitles": True,
+        "title": "",
+        "add_part_numbers": False
+    })
     
     # Update title
     settings["title"] = title
