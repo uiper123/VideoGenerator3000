@@ -254,7 +254,10 @@ async def start_handler(message: Message):
         "/start - Главное меню\n"
         "/help - Справка\n"
         "/status - Статус бота\n"
-        "/logs - Показать последние логи\n\n"
+        "/logs - Логи бота\n"
+        "/worker_logs - Логи Worker'ов\n"
+        "/all_logs - Все логи\n"
+        "/check_drive - Проверка Google Drive\n\n"
         "📹 <b>Что я умею:</b>\n"
         "• Конвертировать видео в формат 9:16 (Shorts)\n"
         "• Скачивать видео с YouTube\n"
@@ -308,8 +311,8 @@ async def status_handler(message: Message):
 
 @dp.message(Command("logs"))
 async def logs_handler(message: Message):
-    """Handle /logs command - show recent logs."""
-    logger.info(f"👤 User {message.from_user.id} requested logs")
+    """Handle /logs command - show recent bot logs."""
+    logger.info(f"👤 User {message.from_user.id} requested bot logs")
     
     try:
         # Read last 20 lines from log file
@@ -323,15 +326,125 @@ async def logs_handler(message: Message):
                 recent_logs = recent_logs[-4000:]
                 recent_logs = "...\n" + recent_logs
             
-            await message.answer(f"📋 <b>Последние логи:</b>\n\n<code>{recent_logs}</code>")
+            await message.answer(f"📋 <b>Логи бота (последние 20 строк):</b>\n\n<code>{recent_logs}</code>")
         else:
-            await message.answer("📋 Логи пусты")
+            await message.answer("📋 Логи бота пусты")
             
     except FileNotFoundError:
-        await message.answer("❌ Файл логов не найден")
+        await message.answer("❌ Файл логов бота не найден")
     except Exception as e:
-        logger.error(f"Error reading logs: {e}")
+        logger.error(f"Error reading bot logs: {e}")
+        await message.answer(f"❌ Ошибка чтения логов бота: {e}")
+
+
+@dp.message(Command("worker_logs"))
+async def worker_logs_handler(message: Message):
+    """Handle /worker_logs command - show recent worker logs."""
+    logger.info(f"👤 User {message.from_user.id} requested worker logs")
+    
+    try:
+        from enhanced_worker_logger import get_worker_logs
+        recent_logs = get_worker_logs(30)  # Последние 30 строк
+        
+        if recent_logs and "не найден" not in recent_logs:
+            # Truncate if too long for Telegram
+            if len(recent_logs) > 4000:
+                recent_logs = recent_logs[-4000:]
+                recent_logs = "...\n" + recent_logs
+            
+            await message.answer(f"🔧 <b>Логи Worker'ов (последние 30 строк):</b>\n\n<code>{recent_logs}</code>")
+        else:
+            await message.answer("🔧 Логи worker'ов пусты или файл не найден")
+            
+    except Exception as e:
+        logger.error(f"Error reading worker logs: {e}")
+        await message.answer(f"❌ Ошибка чтения логов worker'ов: {e}")
+
+
+@dp.message(Command("all_logs"))
+async def all_logs_handler(message: Message):
+    """Handle /all_logs command - show both bot and worker logs."""
+    logger.info(f"👤 User {message.from_user.id} requested all logs")
+    
+    try:
+        # Bot logs
+        bot_logs = ""
+        try:
+            with open("video_bot.log", "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                bot_logs = "".join(lines[-10:])  # Последние 10 строк бота
+        except:
+            bot_logs = "❌ Логи бота недоступны"
+        
+        # Worker logs
+        worker_logs = ""
+        try:
+            from enhanced_worker_logger import get_worker_logs
+            worker_logs = get_worker_logs(15)  # Последние 15 строк worker'ов
+        except:
+            worker_logs = "❌ Логи worker'ов недоступны"
+        
+        combined_logs = f"📋 <b>ЛОГИ БОТА:</b>\n<code>{bot_logs}</code>\n\n🔧 <b>ЛОГИ WORKER'ОВ:</b>\n<code>{worker_logs}</code>"
+        
+        # Truncate if too long
+        if len(combined_logs) > 4000:
+            combined_logs = combined_logs[-4000:]
+            combined_logs = "...\n" + combined_logs
+        
+        await message.answer(combined_logs)
+        
+    except Exception as e:
+        logger.error(f"Error reading all logs: {e}")
         await message.answer(f"❌ Ошибка чтения логов: {e}")
+
+
+@dp.message(Command("check_drive"))
+async def check_drive_handler(message: Message):
+    """Handle /check_drive command - check Google Drive integration."""
+    logger.info(f"👤 User {message.from_user.id} requested Google Drive check")
+    
+    try:
+        # Send checking message
+        checking_msg = await message.answer("🔍 Проверяю интеграцию с Google Drive...")
+        
+        # Import and run checker
+        from google_drive_checker import GoogleDriveChecker
+        
+        checker = GoogleDriveChecker()
+        results = checker.full_check()
+        formatted_results = checker.format_check_results(results)
+        
+        # Update message with results
+        await checking_msg.edit_text(f"<code>{formatted_results}</code>")
+        
+        # Send additional info based on status
+        if results['overall_status'] == 'success':
+            await message.answer(
+                "✅ <b>Google Drive готов к работе!</b>\n\n"
+                "Видео будут автоматически загружаться в Google Drive после обработки."
+            )
+        elif results['overall_status'] == 'error':
+            await message.answer(
+                "❌ <b>Проблемы с Google Drive</b>\n\n"
+                "Видео будут обрабатываться, но не будут загружаться в Drive.\n"
+                "Обратитесь к администратору для настройки интеграции."
+            )
+        else:
+            await message.answer(
+                "⚠️ <b>Google Drive частично настроен</b>\n\n"
+                "Некоторые функции могут работать неправильно.\n"
+                "Рекомендуется проверить настройки."
+            )
+        
+    except ImportError:
+        await message.answer(
+            "❌ <b>Модуль проверки Google Drive недоступен</b>\n\n"
+            "Установите необходимые библиотеки:\n"
+            "<code>pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib</code>"
+        )
+    except Exception as e:
+        logger.error(f"Error checking Google Drive: {e}")
+        await message.answer(f"❌ Ошибка проверки Google Drive: {e}")
 
 
 @dp.message()

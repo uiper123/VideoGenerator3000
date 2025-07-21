@@ -152,15 +152,36 @@ FFMPEG_TIMEOUT=1800
         f.write(env_content)
     print("✅ Environment file created")
     
-    # 8. Download fonts
-    print("\n🔤 Step 8: Downloading fonts...")
-    font_commands = [
-        ("wget -O /content/videobot/fonts/Roboto-Bold.ttf https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf", "Downloading Roboto Bold"),
-        ("wget -O /content/videobot/fonts/Roboto-Regular.ttf https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf", "Downloading Roboto Regular"),
-    ]
+    # 8. Setup fonts from existing collection
+    print("\n🔤 Step 8: Setting up fonts...")
     
-    for cmd, desc in font_commands:
-        run_command(cmd, desc)
+    # Check if fonts directory exists in project
+    fonts_source = "/content/VideoGenerator3000/fonts"
+    fonts_dest = "/content/videobot/fonts"
+    
+    if os.path.exists(fonts_source):
+        print(f"✅ Found existing fonts collection at {fonts_source}")
+        run_command(f"cp -r {fonts_source}/* {fonts_dest}/", "Copying existing fonts")
+        
+        # Check for key fonts
+        key_fonts = [
+            "Roboto/static/Roboto-Regular.ttf",
+            "Roboto/static/Roboto-Bold.ttf", 
+            "Roboto/static/Roboto-Medium.ttf",
+            "Montserrat",
+            "Rubik"
+        ]
+        
+        print("📋 Available font collections:")
+        for font in key_fonts:
+            font_path = os.path.join(fonts_dest, font)
+            if os.path.exists(font_path):
+                print(f"✅ {font}")
+            else:
+                print(f"⚠️ {font} - not found")
+    else:
+        print("⚠️ No existing fonts found, using system fonts")
+        run_command("cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf /content/videobot/fonts/ 2>/dev/null || true", "Copying system font")
     
     # 9. Create startup script
     print("\n🚀 Step 9: Creating startup script...")
