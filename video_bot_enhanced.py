@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Enhanced Video Bot with detailed logging and error handling
+Enhanced Video Bot with detailed logging and error handlingфыфы
 """
 import asyncio
 import logging
