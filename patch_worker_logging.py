@@ -1,284 +1,235 @@
 #!/usr/bin/env python3
 """
-Патч для добавления детального логирования в Celery worker'ы
+Патч для улучшения логирования процесса обработки видео в Google Colab
 """
 import os
 import sys
-import shutil
+import logging
 from pathlib import Path
+import importlib
+import types
+import functools
+import inspect
 
-def patch_worker_files():
-    """Добавляет детальное логирование в файлы worker'ов"""
-    
-    # Создаем папку для логов
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
-    
-    # Патч для app/workers/video_tasks.py
-    video_tasks_path = Path("app/workers/video_tasks.py")
-    if video_tasks_path.exists():
-        print("🔧 Patching app/workers/video_tasks.py...")
-        
-        # Читаем оригинальный файл
-        with open(video_tasks_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Добавляем импорты для логирования
-        logging_imports = '''
-# Enhanced logging setup
-import sys
-from datetime import datetime
-from pathlib import Path
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('/content/videobot/logs/enhanced_worker.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 
-# Setup enhanced logging for workers
-def setup_worker_logging():
-    """Setup detailed logging for Celery workers"""
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
+def patch_function(module_name, function_name, wrapper_func):
+    """
+    Патчит функцию в модуле для добавления логирования или изменения поведения
     
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - [WORKER:%(process)d] - %(message)s'
-    )
-    
-    # Worker logger
-    worker_logger = logging.getLogger('app.workers')
-    worker_logger.setLevel(logging.DEBUG)
-    
-    # File handler
-    worker_handler = logging.FileHandler('logs/worker.log')
-    worker_handler.setLevel(logging.DEBUG)
-    worker_handler.setFormatter(formatter)
-    
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-    
-    worker_logger.addHandler(worker_handler)
-    worker_logger.addHandler(console_handler)
-    
-    return worker_logger
+    Args:
+        module_name: Имя модуля (например, 'app.workers.video_tasks')
+        function_name: Имя функции для патча
+        wrapper_func: Функция-обертка для применения
+    """
+    try:
+        # Импортируем модуль
+        module = importlib.import_module(module_name)
+        
+        # Получаем оригинальную функцию
+        original_func = getattr(module, function_name)
+        
+        # Создаем обертку
+        @functools.wraps(original_func)
+        def wrapped_func(*args, **kwargs):
+            return wrapper_func(original_func, *args, **kwargs)
+        
+        # Заменяем оригинальную функцию
+        setattr(module, function_name, wrapped_func)
+        logger.info(f"✅ Успешно пропатчена функция {module_name}.{function_name}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка патча функции {module_name}.{function_name}: {e}")
+        return False
 
-# Initialize enhanced logging
-enhanced_logger = setup_worker_logging()
-
-def log_task_execution(func):
-    """Decorator for detailed task logging"""
-    def wrapper(self, *args, **kwargs):
-        task_name = func.__name__
-        task_id = getattr(self, 'request', {}).get('id', 'unknown')
-        
-        enhanced_logger.info(f"🚀 TASK START: {task_name} (ID: {task_id})")
-        enhanced_logger.info(f"📋 TASK ARGS: {args}")
-        enhanced_logger.info(f"⚙️ TASK KWARGS: {kwargs}")
-        
-        start_time = datetime.now()
-        
-        try:
-            result = func(self, *args, **kwargs)
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
-            
-            enhanced_logger.info(f"✅ TASK SUCCESS: {task_name} (Duration: {duration:.2f}s)")
-            enhanced_logger.info(f"📤 TASK RESULT: {result}")
-            
-            return result
-            
-        except Exception as e:
-            end_time = datetime.now()
-            duration = (end_time - start_time).total_seconds()
-            
-            enhanced_logger.error(f"❌ TASK FAILED: {task_name} (Duration: {duration:.2f}s)")
-            enhanced_logger.error(f"💥 TASK ERROR: {str(e)}")
-            enhanced_logger.exception("Full traceback:")
-            
-            raise
+def patch_method(class_path, method_name, wrapper_func):
+    """
+    Патчит метод класса
     
-    return wrapper
+    Args:
+        class_path: Путь к классу (например, 'app.services.google_drive.GoogleDriveService')
+        method_name: Имя метода
+        wrapper_func: Функция-обертка для применения
+    """
+    try:
+        # Разбиваем путь на модуль и класс
+        module_path, class_name = class_path.rsplit('.', 1)
+        
+        # Импортируем модуль
+        module = importlib.import_module(module_path)
+        
+        # Получаем класс
+        cls = getattr(module, class_name)
+        
+        # Получаем оригинальный метод
+        original_method = getattr(cls, method_name)
+        
+        # Создаем обертку
+        @functools.wraps(original_method)
+        def wrapped_method(self, *args, **kwargs):
+            return wrapper_func(original_method, self, *args, **kwargs)
+        
+        # Заменяем оригинальный метод
+        setattr(cls, method_name, wrapped_method)
+        logger.info(f"✅ Успешно пропатчен метод {class_path}.{method_name}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка патча метода {class_path}.{method_name}: {e}")
+        return False
 
-'''
+# Патч для улучшения логирования скачивания видео
+def download_video_wrapper(original_func, self, task_id, url, quality="best", settings_dict=None):
+    """Обертка для улучшения логирования download_video"""
+    logger.info(f"🔽 Начинаем скачивание видео для задачи {task_id}: {url}")
+    
+    try:
+        # Вызываем оригинальную функцию
+        result = original_func(self, task_id, url, quality, settings_dict)
         
-        # Вставляем импорты после существующих импортов
-        import_end = content.find('\nlogger = logging.getLogger(__name__)')
-        if import_end != -1:
-            content = content[:import_end] + logging_imports + content[import_end:]
+        # Логируем успешное скачивание
+        file_size_mb = result.get('file_size', 0) / (1024 * 1024)
+        logger.info(f"✅ Видео успешно скачано: {result.get('title')} ({file_size_mb:.2f} МБ)")
+        logger.info(f"📁 Локальный путь: {result.get('local_path')}")
+        logger.info(f"⏱️ Длительность: {result.get('duration')} секунд")
         
-        # Добавляем декоратор к функциям задач
-        functions_to_patch = [
-            '@shared_task(base=VideoTask, bind=True)\ndef download_video(',
-            '@shared_task(base=VideoTask, bind=True)\ndef process_video(',
-            '@shared_task(base=VideoTask, bind=True)\ndef upload_to_drive(',
-            '@shared_task(base=VideoTask, bind=True)\ndef process_video_chain_optimized('
-        ]
+        return result
+    except Exception as e:
+        logger.error(f"❌ Ошибка скачивания видео: {e}")
+        raise
+
+# Патч для улучшения логирования обработки видео
+def process_video_wrapper(original_func, self, task_id, local_path, settings_dict):
+    """Обертка для улучшения логирования process_video"""
+    logger.info(f"⚙️ Начинаем обработку видео для задачи {task_id}")
+    logger.info(f"📁 Исходный файл: {local_path}")
+    logger.info(f"🛠️ Настройки обработки: {settings_dict}")
+    
+    try:
+        # Вызываем оригинальную функцию
+        result = original_func(self, task_id, local_path, settings_dict)
         
-        for func_signature in functions_to_patch:
-            if func_signature in content:
-                content = content.replace(
-                    func_signature,
-                    '@log_task_execution\n' + func_signature
-                )
+        # Логируем успешную обработку
+        logger.info(f"✅ Видео успешно обработано для задачи {task_id}")
+        logger.info(f"🎬 Создано фрагментов: {len(result)}")
         
-        # Создаем резервную копию
-        shutil.copy2(video_tasks_path, f"{video_tasks_path}.backup")
+        return result
+    except Exception as e:
+        logger.error(f"❌ Ошибка обработки видео: {e}")
+        raise
+
+# Патч для улучшения логирования загрузки на Google Drive
+def upload_to_drive_wrapper(original_func, task_id, fragments):
+    """Обертка для улучшения логирования upload_to_drive"""
+    logger.info(f"☁️ Начинаем загрузку на Google Drive для задачи {task_id}")
+    logger.info(f"🎬 Загружаем {len(fragments)} фрагментов")
+    
+    try:
+        # Вызываем оригинальную функцию
+        result = original_func(task_id, fragments)
         
-        # Записываем патченый файл
-        with open(video_tasks_path, 'w', encoding='utf-8') as f:
-            f.write(content)
+        # Логируем успешную загрузку
+        logger.info(f"✅ Загрузка на Google Drive завершена для задачи {task_id}")
+        logger.info(f"📊 Загружено файлов: {len(result)}")
         
-        print("✅ app/workers/video_tasks.py patched successfully")
+        # Выводим ссылки на файлы
+        for i, upload_result in enumerate(result):
+            logger.info(f"🔗 Фрагмент {i+1}: {upload_result.get('direct_url', 'N/A')}")
+        
+        return result
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки на Google Drive: {e}")
+        raise
+
+# Патч для улучшения логирования GoogleDriveService.upload_multiple_files
+def upload_multiple_files_wrapper(original_method, self, file_paths, task_id=None):
+    """Обертка для улучшения логирования GoogleDriveService.upload_multiple_files"""
+    logger.info(f"☁️ GoogleDriveService: Загрузка {len(file_paths)} файлов на Google Drive")
+    logger.info(f"🔐 Аутентификация: {self.auth_type}, Сервис инициализирован: {self.service is not None}")
+    
+    # Проверяем наличие token.pickle
+    token_path = "token.pickle"
+    if os.path.exists(token_path):
+        logger.info(f"✅ Найден token.pickle: {os.path.getsize(token_path)} байт")
     else:
-        print("❌ app/workers/video_tasks.py not found")
+        logger.warning(f"⚠️ Файл token.pickle не найден!")
     
-    # Патч для app/video_processing/processor.py
-    processor_path = Path("app/video_processing/processor.py")
-    if processor_path.exists():
-        print("🔧 Patching app/video_processing/processor.py...")
+    try:
+        # Вызываем оригинальный метод
+        result = original_method(self, file_paths, task_id)
         
-        with open(processor_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+        # Логируем результат
+        successful = [r for r in result if r.get("success")]
+        failed = [r for r in result if not r.get("success")]
         
-        # Добавляем детальное логирование в VideoProcessor
-        enhanced_logging = '''
-        # Enhanced logging for video processing
-        self.logger.info(f"🎬 Starting video processing: {input_path}")
-        self.logger.info(f"📁 Input file size: {os.path.getsize(input_path) if os.path.exists(input_path) else 'N/A'} bytes")
-        self.logger.info(f"⚙️ Processing settings: {settings}")
+        logger.info(f"📊 Результат загрузки: {len(successful)}/{len(result)} успешно, {len(failed)} с ошибками")
         
-        start_time = time.time()
-'''
+        # Выводим ссылки на успешно загруженные файлы
+        for i, upload_result in enumerate(successful):
+            logger.info(f"🔗 Файл {i+1}: {upload_result.get('direct_url', upload_result.get('file_url', 'N/A'))}")
         
-        # Ищем метод process и добавляем логирование
-        if 'def process(' in content:
-            content = content.replace(
-                'def process(',
-                'def process('
-            )
-            # Добавляем логирование в начало метода process
-            process_start = content.find('def process(')
-            if process_start != -1:
-                # Находим начало тела функции
-                func_body_start = content.find(':', process_start) + 1
-                # Находим первую строку с отступом
-                next_line = content.find('\n', func_body_start) + 1
-                content = content[:next_line] + enhanced_logging + content[next_line:]
+        # Выводим ошибки
+        for i, upload_result in enumerate(failed):
+            logger.error(f"❌ Ошибка загрузки файла {upload_result.get('file_path', f'#{i+1}')}: {upload_result.get('error', 'Неизвестная ошибка')}")
         
-        # Создаем резервную копию
-        shutil.copy2(processor_path, f"{processor_path}.backup")
-        
-        # Записываем патченый файл
-        with open(processor_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        
-        print("✅ app/video_processing/processor.py patched successfully")
-    else:
-        print("❌ app/video_processing/processor.py not found")
-
-def create_worker_start_script():
-    """Создает скрипт для запуска worker'а с логированием"""
-    
-    script_content = '''#!/bin/bash
-# Enhanced Celery Worker Startup Script
-
-echo "🚀 Starting Celery Worker with enhanced logging..."
-
-# Create logs directory
-mkdir -p logs
-
-# Set environment variables for better logging
-export CELERY_LOG_LEVEL=DEBUG
-export PYTHONUNBUFFERED=1
-
-# Start Celery worker with enhanced logging
-celery -A app.workers.celery_app worker \\
-    --loglevel=DEBUG \\
-    --concurrency=2 \\
-    --logfile=logs/celery_worker.log \\
-    --pidfile=logs/celery_worker.pid \\
-    --hostname=worker@%h \\
-    --queues=default,video_processing \\
-    --max-tasks-per-child=10 \\
-    --time-limit=3600 \\
-    --soft-time-limit=3000
-
-echo "👋 Celery Worker stopped"
-'''
-    
-    with open('start_worker_enhanced.sh', 'w') as f:
-        f.write(script_content)
-    
-    # Делаем скрипт исполняемым
-    os.chmod('start_worker_enhanced.sh', 0o755)
-    
-    print("✅ Enhanced worker startup script created: start_worker_enhanced.sh")
-
-def create_log_viewer_script():
-    """Создает скрипт для просмотра логов в реальном времени"""
-    
-    script_content = '''#!/bin/bash
-# Log Viewer Script
-
-echo "📋 VideoGenerator3000 - Log Viewer"
-echo "=================================="
-
-case "$1" in
-    "worker")
-        echo "🔧 Watching worker logs..."
-        tail -f logs/worker.log
-        ;;
-    "celery")
-        echo "🔧 Watching celery logs..."
-        tail -f logs/celery_worker.log
-        ;;
-    "bot")
-        echo "🤖 Watching bot logs..."
-        tail -f video_bot.log
-        ;;
-    "all")
-        echo "📋 Watching all logs..."
-        tail -f logs/worker.log logs/celery_worker.log video_bot.log
-        ;;
-    *)
-        echo "Usage: $0 {worker|celery|bot|all}"
-        echo ""
-        echo "Available log files:"
-        ls -la logs/ video_bot.log 2>/dev/null || echo "No log files found"
-        ;;
-esac
-'''
-    
-    with open('view_logs.sh', 'w') as f:
-        f.write(script_content)
-    
-    # Делаем скрипт исполняемым
-    os.chmod('view_logs.sh', 0o755)
-    
-    print("✅ Log viewer script created: view_logs.sh")
+        return result
+    except Exception as e:
+        logger.error(f"❌ Ошибка в GoogleDriveService.upload_multiple_files: {e}")
+        raise
 
 def main():
-    """Main function"""
-    print("🔧 VideoGenerator3000 - Worker Logging Patcher")
-    print("=" * 50)
+    """Основная функция для применения всех патчей"""
+    logger.info("🔧 Применение патчей для улучшения логирования в Google Colab")
     
-    # Проверяем, что мы в правильной директории
-    if not Path("app").exists():
-        print("❌ Error: app/ directory not found!")
-        print("Please run this script from the project root directory")
-        return
+    # Патчим функции для улучшения логирования
+    patches = [
+        # Улучшение логирования скачивания видео
+        {
+            'module': 'app.workers.video_tasks',
+            'function': 'download_video',
+            'wrapper': download_video_wrapper
+        },
+        # Улучшение логирования обработки видео
+        {
+            'module': 'app.workers.video_tasks',
+            'function': 'process_video',
+            'wrapper': process_video_wrapper
+        },
+        # Улучшение логирования загрузки на Google Drive
+        {
+            'module': 'app.workers.video_tasks',
+            'function': 'upload_to_drive',
+            'wrapper': upload_to_drive_wrapper
+        },
+    ]
     
-    # Применяем патчи
-    patch_worker_files()
+    # Применяем патчи функций
+    for patch in patches:
+        patch_function(patch['module'], patch['function'], patch['wrapper'])
     
-    # Создаем вспомогательные скрипты
-    create_worker_start_script()
-    create_log_viewer_script()
+    # Патчим методы классов
+    method_patches = [
+        # Улучшение логирования загрузки файлов на Google Drive
+        {
+            'class_path': 'app.services.google_drive.GoogleDriveService',
+            'method': 'upload_multiple_files',
+            'wrapper': upload_multiple_files_wrapper
+        },
+    ]
     
-    print("\n" + "=" * 50)
-    print("✅ Patching completed!")
-    print("\n📋 Next steps:")
-    print("1. Restart Celery worker: ./start_worker_enhanced.sh")
-    print("2. View logs in real-time: ./view_logs.sh worker")
-    print("3. Use /worker_logs command in bot to see logs")
-    print("\n⚠️ Backup files created with .backup extension")
+    # Применяем патчи методов
+    for patch in method_patches:
+        patch_method(patch['class_path'], patch['method'], patch['wrapper'])
+    
+    logger.info("✅ Патчи для улучшения логирования успешно применены")
 
 if __name__ == "__main__":
     main()
