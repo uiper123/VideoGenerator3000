@@ -2,20 +2,12 @@ services:
   # PostgreSQL Database
   - type: pserv
     name: videobot-postgres
-    env: docker
     plan: free
-    dockerfilePath: ./Dockerfile.postgres
-    envVars:
-      - key: POSTGRES_DB
-        value: videobot
-      - key: POSTGRES_USER
-        value: videobot
-      - key: POSTGRES_PASSWORD
-        generateValue: true
-    disk:
-      name: postgres-data
-      mountPath: /var/lib/postgresql/data
-      sizeGB: 1
+    databaseName: videobot
+    databaseUser: videobot
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: Allow all connections
 
   # Redis Cache
   - type: redis
@@ -26,9 +18,8 @@ services:
   # Main Application
   - type: web
     name: videobot-app
-    env: docker
+    runtime: python3
     plan: free
-    dockerfilePath: ./Dockerfile
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false  # Set manually in Render dashboard
@@ -69,9 +60,8 @@ services:
   # Celery Worker (Background Service)
   - type: worker
     name: videobot-worker
-    env: docker
+    runtime: python3
     plan: free
-    dockerfilePath: ./Dockerfile
     envVars:
       - key: DATABASE_URL
         fromService:
