@@ -27,8 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the custom ImageMagick policy to fix MoviePy text rendering issues.
-COPY policy.xml /etc/ImageMagick-6/policy.xml
+# Skip ImageMagick policy copy since policy.xml was deleted
 
 # Install Python dependencies
 COPY requirements.txt .

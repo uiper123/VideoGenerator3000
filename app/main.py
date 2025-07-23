@@ -302,6 +302,19 @@ def create_webhook_app() -> Application:
     # Register webhook handler
     webhook_requests_handler.register(app, path="/webhook")
     
+    # Add health check endpoint for Render
+    async def health_check(request):
+        """Health check endpoint"""
+        from datetime import datetime
+        return web.json_response({
+            "status": "healthy",
+            "service": "VideoGenerator3000",
+            "timestamp": datetime.now().isoformat(),
+            "version": "1.0.0"
+        })
+    
+    app.router.add_get("/health", health_check)
+    
     # Setup application
     setup_application(app, dp, bot=bot)
     

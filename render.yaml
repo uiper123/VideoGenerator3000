@@ -1,0 +1,101 @@
+services:
+  # PostgreSQL Database
+  - type: pserv
+    name: videobot-postgres
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile.postgres
+    envVars:
+      - key: POSTGRES_DB
+        value: videobot
+      - key: POSTGRES_USER
+        value: videobot
+      - key: POSTGRES_PASSWORD
+        generateValue: true
+    disk:
+      name: postgres-data
+      mountPath: /var/lib/postgresql/data
+      sizeGB: 1
+
+  # Redis Cache
+  - type: redis
+    name: videobot-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+
+  # Main Application
+  - type: web
+    name: videobot-app
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false  # Set manually in Render dashboard
+      - key: TELEGRAM_ADMIN_IDS
+        sync: false  # Set manually in Render dashboard
+      - key: DATABASE_URL
+        fromService:
+          type: pserv
+          name: videobot-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: videobot-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: videobot-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: videobot-redis
+          property: connectionString
+      - key: DEBUG
+        value: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: GOOGLE_CREDENTIALS_JSON_CONTENT
+        sync: false  # Set manually in Render dashboard
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false  # Set manually in Render dashboard
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.main
+    healthCheckPath: /health
+    
+  # Celery Worker (Background Service)
+  - type: worker
+    name: videobot-worker
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        fromService:
+          type: pserv
+          name: videobot-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: videobot-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: redis
+          name: videobot-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: redis
+          name: videobot-redis
+          property: connectionString
+      - key: GOOGLE_CREDENTIALS_JSON_CONTENT
+        sync: false
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A app.workers.celery_app worker --loglevel=info --concurrency=1
