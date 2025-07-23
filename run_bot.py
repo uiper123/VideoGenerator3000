@@ -17,21 +17,11 @@ if __name__ == "__main__":
     print("Press Ctrl+C to stop the bot")
     
     try:
-        # --- Автоматическое создание token.pickle из переменной окружения ---
-        b64_token = os.getenv("GOOGLE_OAUTH_TOKEN_BASE64")
-        if b64_token:
-            with open("token.pickle", "wb") as f:
-                f.write(base64.b64decode(b64_token))
-            print("[INFO] token.pickle создан из переменной окружения GOOGLE_OAUTH_TOKEN_BASE64")
-        # --- конец блока ---
-
-        # --- Отладочный вывод для проверки переменной окружения ---
-        token_b64 = os.getenv("GOOGLE_OAUTH_TOKEN_BASE64")
-        if token_b64:
-            print("[DEBUG] GOOGLE_OAUTH_TOKEN_BASE64 (first 20):", token_b64[:20])
+        # Проверяем наличие token.pickle файла
+        if os.path.exists("token.pickle"):
+            print("[INFO] Найден token.pickle файл для OAuth авторизации")
         else:
-            print("[DEBUG] GOOGLE_OAUTH_TOKEN_BASE64 not set")
-        # --- конец отладочного вывода ---
+            print("[WARNING] token.pickle не найден. Запустите setup_oauth.py для настройки OAuth")
 
         asyncio.run(main())
     except KeyboardInterrupt:
