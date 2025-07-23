@@ -71,7 +71,7 @@
 
 1. **New** → **Web Service**
 2. **Connect Repository:** выберите ваш репозиторий
-3. **Name:** `videobot-app`
+3. **Name:** `videobot-app`ы
 4. **Environment:** Docker
 5. **Plan:** Free
 6. **Build Command:** `pip install -r requirements.txt`
