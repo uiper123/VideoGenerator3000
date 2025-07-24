@@ -51,6 +51,8 @@ services:
         value: INFO
       - key: GOOGLE_CREDENTIALS_JSON_CONTENT
         sync: false  # Set manually in Render dashboard
+      - key: GOOGLE_OAUTH_TOKEN_BASE64
+        sync: false  # Set manually in Render dashboard
       - key: GOOGLE_DRIVE_FOLDER_ID
         sync: false  # Set manually in Render dashboard
     buildCommand: pip install -r requirements.txt
@@ -84,6 +86,8 @@ services:
           name: videobot-redis
           property: connectionString
       - key: GOOGLE_CREDENTIALS_JSON_CONTENT
+        sync: false
+      - key: GOOGLE_OAUTH_TOKEN_BASE64
         sync: false
       - key: GOOGLE_DRIVE_FOLDER_ID
         sync: false
