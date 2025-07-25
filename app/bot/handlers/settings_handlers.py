@@ -509,8 +509,8 @@ async def show_style_settings(callback: CallbackQuery) -> None:
     )
 
 
-@router.callback_query(StyleAction.filter(F.action == "text_settings"), SettingsStates.main)
-async def show_text_settings(callback: CallbackQuery, callback_data: StyleAction) -> None:
+@router.callback_query(StyleAction.filter(F.action == "text_settings"))
+async def show_text_settings(callback: CallbackQuery, callback_data: StyleAction, state: FSMContext) -> None:
     """
     Show text settings for title or subtitle.
     
@@ -557,7 +557,7 @@ async def show_text_settings(callback: CallbackQuery, callback_data: StyleAction
 
 
 @router.callback_query(StyleAction.filter(F.action == "color_settings"))
-async def show_color_settings(callback: CallbackQuery, callback_data: StyleAction) -> None:
+async def show_color_settings(callback: CallbackQuery, callback_data: StyleAction, state: FSMContext) -> None:
     """
     Show color settings.
     
@@ -596,7 +596,7 @@ async def show_color_settings(callback: CallbackQuery, callback_data: StyleActio
 
 
 @router.callback_query(StyleAction.filter(F.action == "size_settings"))
-async def show_size_settings(callback: CallbackQuery, callback_data: StyleAction) -> None:
+async def show_size_settings(callback: CallbackQuery, callback_data: StyleAction, state: FSMContext) -> None:
     """
     Show size settings.
     
@@ -656,13 +656,14 @@ async def show_size_settings(callback: CallbackQuery, callback_data: StyleAction
 
 
 @router.callback_query(StyleAction.filter(F.action == "set_color"))
-async def set_text_color(callback: CallbackQuery, callback_data: StyleAction) -> None:
+async def set_text_color(callback: CallbackQuery, callback_data: StyleAction, state: FSMContext) -> None:
     """
     Set text color.
     
     Args:
         callback: Callback query
         callback_data: Style action data
+        state: FSM context
     """
     user_id = callback.from_user.id
     text_type = callback_data.text_type
@@ -680,17 +681,18 @@ async def set_text_color(callback: CallbackQuery, callback_data: StyleAction) ->
         await callback.answer("❌ Ошибка сохранения настроек", show_alert=True)
         
     # Return to color settings
-    await show_color_settings(callback, callback_data)
+    await show_color_settings(callback, callback_data, state)
 
 
 @router.callback_query(StyleAction.filter(F.action == "set_size"))
-async def set_text_size(callback: CallbackQuery, callback_data: StyleAction) -> None:
+async def set_text_size(callback: CallbackQuery, callback_data: StyleAction, state: FSMContext) -> None:
     """
     Set text size.
     
     Args:
         callback: Callback query
         callback_data: Style action data
+        state: FSM context
     """
     user_id = callback.from_user.id
     text_type = callback_data.text_type
@@ -708,7 +710,7 @@ async def set_text_size(callback: CallbackQuery, callback_data: StyleAction) -> 
         await callback.answer("❌ Ошибка сохранения настроек", show_alert=True)
 
     # Return to size settings
-    await show_size_settings(callback, callback_data)
+    await show_size_settings(callback, callback_data, state)
 
 
 @router.callback_query(StyleAction.filter(F.action == "reset_styles"))
@@ -741,7 +743,58 @@ async def return_to_style_menu(callback: CallbackQuery) -> None:
     Args:
         callback: Callback query
     """
-    await show_style_settings(callback) 
+    await show_style_settings(callback)
+
+
+@router.callback_query(StyleAction.filter(F.action == "preview_styles"))
+async def preview_styles_handler(callback: CallbackQuery) -> None:
+    """
+    Generate and send a preview of the current style settings.
+    
+    Args:
+        callback: Callback query
+    """
+    await callback.answer("⚙️ Генерируется предпросмотр...", show_alert=False)
+    user_id = callback.from_user.id
+    
+    # Get current user settings
+    title_color = await UserSettingsService.get_style_setting(user_id, 'title_style', 'color')
+    title_size = await UserSettingsService.get_style_setting(user_id, 'title_style', 'size')
+    title_font = await UserSettingsService.get_style_setting(user_id, 'title_style', 'font')
+    
+    subtitle_color = await UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'color')
+    subtitle_size = await UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'size')
+    subtitle_font = await UserSettingsService.get_style_setting(user_id, 'subtitle_style', 'font')
+    
+    # Get human-readable names
+    title_color_name = UserSettingsService.get_color_name(title_color)
+    title_size_name = UserSettingsService.get_size_name(title_size)
+    subtitle_color_name = UserSettingsService.get_color_name(subtitle_color)
+    subtitle_size_name = UserSettingsService.get_size_name(subtitle_size)
+    
+    text = f"""
+👁️ <b>Предпросмотр стилей</b>
+
+<b>Ваши текущие настройки:</b>
+
+📋 <b>Заголовок:</b>
+• Цвет: {title_color_name}
+• Размер: {title_size_name}
+• Шрифт: {title_font}
+
+📝 <b>Субтитры:</b>
+• Цвет: {subtitle_color_name}
+• Размер: {subtitle_size_name}
+• Шрифт: {subtitle_font}
+
+<i>💡 Совет: Обработайте видео чтобы увидеть реальный результат с вашими настройками!</i>
+    """
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_style_settings_menu_keyboard(),
+        parse_mode="HTML"
+    ) 
 
 
 @router.callback_query(SettingsAction.filter(F.action == "proxy_settings"))
