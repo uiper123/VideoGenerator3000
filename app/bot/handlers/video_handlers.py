@@ -329,6 +329,16 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
         callback_data=SettingsValueAction(action="title", value="set")
     )
     
+    # Title size setting - NEW!
+    from app.services.user_settings import UserSettingsService
+    user_id = message.from_user.id if isinstance(message, Message) else message.from_user.id
+    current_title_size = await UserSettingsService.get_style_setting(user_id, 'title_style', 'size')
+    title_size_name = UserSettingsService.get_size_name(current_title_size)
+    builder.button(
+        text=f"📏 Размер заголовка: {title_size_name.split(' ', 1)[1]}",  # Убираем эмодзи для компактности
+        callback_data=SettingsValueAction(action="title_size", value="set")
+    )
+    
     # Part numbering setting with dynamic text
     part_numbers_text = "🔢 Нумерация частей: ВКЛ" if settings.get('add_part_numbers', False) else "🔢 Нумерация частей: ВЫКЛ"
     builder.button(
@@ -356,8 +366,8 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
         callback_data=MenuAction(action="video_menu")
     )
     
-    # Arrange buttons: 4 duration, 3 quality, 1 subtitles, 1 title, 1 part numbers, 1 cookies, 1 confirm, 1 back
-    builder.adjust(4, 3, 1, 1, 1, 1, 1, 1)
+    # Arrange buttons: 4 duration, 3 quality, 1 subtitles, 1 title, 1 title_size, 1 part numbers, 1 cookies, 1 confirm, 1 back
+    builder.adjust(4, 3, 1, 1, 1, 1, 1, 1, 1)
     
     keyboard = builder.as_markup()
     
@@ -697,6 +707,127 @@ async def set_title_value(callback: CallbackQuery, callback_data: SettingsValueA
     await state.set_state(VideoProcessingStates.configuring_settings)
     
     # Show updated settings
+    source = data.get("source_url", data.get("file_name", "Unknown"))
+    await show_video_settings(callback, state, source)
+
+
+@router.callback_query(SettingsValueAction.filter(F.action == "title_size"))
+async def set_title_size_setting(callback: CallbackQuery, state: FSMContext) -> None:
+    """
+    Show title size selection menu.
+    
+    Args:
+        callback: Callback query
+        state: FSM context
+    """
+    user_id = callback.from_user.id
+    
+    # Get current title size
+    from app.services.user_settings import UserSettingsService
+    current_size = await UserSettingsService.get_style_setting(user_id, 'title_style', 'size')
+    current_size_name = UserSettingsService.get_size_name(current_size)
+    
+    text = f"""
+📏 <b>Размер заголовка</b>
+
+<b>Текущий размер:</b> {current_size_name}
+
+Выберите оптимальный размер для заголовков:
+
+🔍 <b>Крошечный</b> - минимальный размер
+📏 <b>Маленький</b> - для деликатного оформления
+📐 <b>Средний</b> - универсальный выбор
+📊 <b>Большой</b> - рекомендуется для заголовков
+📈 <b>Очень большой</b> - максимальная читаемость
+🎯 <b>Огромный</b> - для акцентов
+🏔️ <b>Массивный</b> - максимальный размер
+
+<b>Рекомендации:</b>
+• Большой или очень большой - оптимально
+• Огромный - для коротких заголовков
+• Массивный - только для одного слова
+
+<i>Размер автоматически адаптируется под разрешение видео</i>
+    """
+    
+    from app.bot.keyboards.main_menu import InlineKeyboardBuilder, SettingsValueAction
+    
+    builder = InlineKeyboardBuilder()
+    
+    # Size options for titles
+    sizes = [
+        ("🔍 Крошечный", "tiny"),
+        ("📏 Маленький", "small"),
+        ("📐 Средний", "medium"),
+        ("📊 Большой", "large"),
+        ("📈 Очень большой", "extra_large"),
+        ("🎯 Огромный", "huge"),
+        ("🏔️ Массивный", "massive"),
+    ]
+    
+    for size_name, size_value in sizes:
+        # Highlight current size
+        button_text = f"✅ {size_name}" if size_value == current_size else size_name
+        builder.button(
+            text=button_text,
+            callback_data=SettingsValueAction(action="title_size_set", value=size_value)
+        )
+    
+    # Back button
+    builder.button(
+        text="⬅️ Назад к настройкам",
+        callback_data=SettingsValueAction(action="back_to_video_settings", value="")
+    )
+    
+    # Arrange buttons: 2x3 + 1 + back
+    builder.adjust(2, 2, 2, 1, 1)
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=builder.as_markup(),
+        parse_mode="HTML"
+    )
+
+
+@router.callback_query(SettingsValueAction.filter(F.action == "title_size_set"))
+async def set_title_size_value(callback: CallbackQuery, callback_data: SettingsValueAction, state: FSMContext) -> None:
+    """
+    Set title size value.
+    
+    Args:
+        callback: Callback query
+        callback_data: Settings action data
+        state: FSM context
+    """
+    user_id = callback.from_user.id
+    size_value = callback_data.value
+    
+    # Save size to user settings
+    from app.services.user_settings import UserSettingsService
+    success = await UserSettingsService.set_style_setting(user_id, 'title_style', 'size', size_value)
+    
+    if success:
+        size_name = UserSettingsService.get_size_name(size_value)
+        await callback.answer(f"✅ Размер заголовка изменен на {size_name}", show_alert=True)
+    else:
+        await callback.answer("❌ Ошибка сохранения настроек", show_alert=True)
+    
+    # Return to video settings
+    data = await state.get_data()
+    source = data.get("source_url", data.get("file_name", "Unknown"))
+    await show_video_settings(callback, state, source)
+
+
+@router.callback_query(SettingsValueAction.filter(F.action == "back_to_video_settings"))
+async def back_to_video_settings(callback: CallbackQuery, state: FSMContext) -> None:
+    """
+    Return to video settings menu.
+    
+    Args:
+        callback: Callback query
+        state: FSM context
+    """
+    data = await state.get_data()
     source = data.get("source_url", data.get("file_name", "Unknown"))
     await show_video_settings(callback, state, source)
 
