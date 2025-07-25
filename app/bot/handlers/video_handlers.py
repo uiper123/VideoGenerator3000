@@ -334,8 +334,17 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
     user_id = message.from_user.id if isinstance(message, Message) else message.from_user.id
     current_title_size = await UserSettingsService.get_style_setting(user_id, 'title_style', 'size')
     title_size_name = UserSettingsService.get_size_name(current_title_size)
+    
+    # Отладочная информация
+    logger.info(f"[DEBUG] User {user_id}: current_title_size={current_title_size}, title_size_name={title_size_name}")
+    
+    # Убираем эмодзи для компактности
+    if ' ' in title_size_name:
+        size_display = title_size_name.split(' ', 1)[1]
+    else:
+        size_display = title_size_name
     builder.button(
-        text=f"📏 Размер заголовка: {title_size_name.split(' ', 1)[1]}",  # Убираем эмодзи для компактности
+        text=f"📏 Размер заголовка: {size_display}",
         callback_data=SettingsValueAction(action="title_size", value="set")
     )
     
@@ -804,7 +813,16 @@ async def set_title_size_value(callback: CallbackQuery, callback_data: SettingsV
     
     # Save size to user settings
     from app.services.user_settings import UserSettingsService
+    
+    # Отладочная информация - до сохранения
+    current_size_before = await UserSettingsService.get_style_setting(user_id, 'title_style', 'size')
+    logger.info(f"[DEBUG] User {user_id}: Changing size from {current_size_before} to {size_value}")
+    
     success = await UserSettingsService.set_style_setting(user_id, 'title_style', 'size', size_value)
+    
+    # Отладочная информация - после сохранения
+    current_size_after = await UserSettingsService.get_style_setting(user_id, 'title_style', 'size')
+    logger.info(f"[DEBUG] User {user_id}: Size after save: {current_size_after}, success: {success}")
     
     if success:
         size_name = UserSettingsService.get_size_name(size_value)
