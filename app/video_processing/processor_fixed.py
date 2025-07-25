@@ -165,7 +165,7 @@ class VideoProcessor:
                     fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             
             title_escaped = title.replace("'", "\\'").replace(":", "\\:")
-            title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={int(height*0.04)}:fontcolor=red:x=(w-text_w)/2:y={int(height*0.05)}:box=1:boxcolor=black@0.7:boxborderw=10"
+            title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={int(height*0.03)}:fontcolor=red:x=(w-text_w)/2:y={int(height*0.05)}:box=1:boxcolor=black@0.7:boxborderw=10"
             filters.append(f"[with_main]{title_filter}[output]")
         else:
             # If no title, rename the final output

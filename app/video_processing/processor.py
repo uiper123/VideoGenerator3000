@@ -29,7 +29,7 @@ DEFAULT_TEXT_STYLES = {
         'color': 'red',
         'border_color': 'black',
         'border_width': 3,
-        'size_ratio': 0.04,  # 4% от высоты видео
+        'size_ratio': 0.03,  # 3% от высоты видео (уменьшено с 4%)
         'position_y_ratio': 0.05,  # 5% от верха видео
     },
     'subtitle': {
@@ -55,10 +55,10 @@ TEXT_COLOR_PRESETS = {
 
 # Пресеты размеров
 TEXT_SIZE_PRESETS = {
-    'small': {'title': 0.03, 'subtitle': 0.04},
-    'medium': {'title': 0.04, 'subtitle': 0.05},
-    'large': {'title': 0.05, 'subtitle': 0.06},
-    'extra_large': {'title': 0.06, 'subtitle': 0.07},
+    'small': {'title': 0.025, 'subtitle': 0.04},      # Уменьшено с 0.03
+    'medium': {'title': 0.03, 'subtitle': 0.05},      # Уменьшено с 0.04
+    'large': {'title': 0.035, 'subtitle': 0.06},      # Уменьшено с 0.05
+    'extra_large': {'title': 0.04, 'subtitle': 0.07}, # Уменьшено с 0.06
 }
 
 logger = logging.getLogger(__name__)
