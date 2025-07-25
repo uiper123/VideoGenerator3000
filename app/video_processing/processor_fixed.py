@@ -405,11 +405,11 @@ class VideoProcessor:
             # Get output resolution based on quality
             output_width, output_height = self._get_output_resolution(quality)
             
-            # Build FFmpeg command for professional shorts
+            # Build FFmpeg command for professional shorts with precise timing
             cmd = [
                 'ffmpeg',
                 '-i', video_path,
-                '-ss', str(start_time),
+                '-ss', str(start_time),  # Precise seeking after input
                 '-t', str(duration),
                 '-filter_complex', self._build_video_filters(output_width, output_height, title, font_path),
                 '-map', '[output]',  # Map the processed video stream
@@ -420,6 +420,7 @@ class VideoProcessor:
                 '-r', str(SHORTS_FPS),
                 '-c:a', 'aac',
                 '-b:a', '192k',  # Higher audio quality
+                '-avoid_negative_ts', 'make_zero',  # Handle timing issues
                 '-movflags', '+faststart',
                 '-y',  # Overwrite output file
                 output_path

@@ -180,6 +180,109 @@ class VideoProcessor:
             logger.error(f"Failed to get video info: {e}")
             raise
     
+    def create_fragments_precise(
+        self, 
+        video_path: str, 
+        fragment_duration: int = 30,
+        quality: str = "1080p",
+        title: str = "",
+        subtitle_style: str = "modern"
+    ) -> List[Dict[str, Any]]:
+        """
+        Cut video into fragments with PRECISE timing (slower but accurate).
+        
+        Args:
+            video_path: Path to input video
+            fragment_duration: Duration of each fragment in seconds
+            quality: Output quality (720p, 1080p, 4k)
+            title: Title to display at the top
+            subtitle_style: Style of subtitles (modern, classic, colorful)
+            
+        Returns:
+            List of fragment information
+        """
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Video file not found: {video_path}")
+        
+        # Validate fragment duration
+        if not (MIN_FRAGMENT_DURATION <= fragment_duration <= MAX_FRAGMENT_DURATION):
+            raise ValueError(f"Fragment duration must be between {MIN_FRAGMENT_DURATION} and {MAX_FRAGMENT_DURATION} seconds")
+        
+        # Get video info
+        video_info = self.get_video_info(video_path)
+        total_duration = video_info['duration']
+        
+        # Calculate fragments with exact timing
+        fragments = []
+        current_time = 0.0
+        fragment_number = 1
+        
+        while current_time < total_duration:
+            # Calculate exact start and end times
+            start_time = current_time
+            end_time = min(current_time + fragment_duration, total_duration)
+            actual_duration = end_time - start_time
+            
+            # Skip fragments that are too short
+            if actual_duration < MIN_FRAGMENT_DURATION:
+                break
+            
+            fragment_filename = f"fragment_{fragment_number:03d}_{uuid.uuid4().hex[:4]}.mp4"
+            fragment_path = os.path.join(self.output_dir, fragment_filename)
+            
+            # Use precise cutting with frame-accurate seeking
+            cmd = [
+                'ffmpeg',
+                '-ss', str(start_time),  # Seek before input for precision
+                '-i', video_path,
+                '-t', str(actual_duration),
+                '-c:v', 'libx264',
+                '-preset', 'fast',  # Balance between speed and quality
+                '-crf', '20',  # Good quality
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-avoid_negative_ts', 'make_zero',
+                '-movflags', '+faststart',
+                '-y',
+                fragment_path
+            ]
+            
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=28800)
+                
+                if os.path.exists(fragment_path):
+                    file_size = os.path.getsize(fragment_path)
+                    fragment_info = {
+                        'fragment_number': fragment_number,
+                        'filename': fragment_filename,
+                        'local_path': fragment_path,
+                        'start_time': start_time,
+                        'end_time': end_time,
+                        'duration': actual_duration,
+                        'size_bytes': file_size,
+                        'resolution': f"{video_info['width']}x{video_info['height']}",
+                        'fps': video_info['fps'],
+                        'has_subtitles': False
+                    }
+                    fragments.append(fragment_info)
+                    logger.info(f"Created precise fragment {fragment_number} ({start_time:.2f}s - {end_time:.2f}s): {fragment_filename}")
+                    
+                    # Move to next fragment
+                    current_time = end_time
+                    fragment_number += 1
+                else:
+                    logger.warning(f"Fragment {fragment_number} was not created despite successful FFmpeg command.")
+                    break
+
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Failed to cut precise fragment {fragment_number}. FFmpeg stderr: {e.stderr}")
+                break
+            except subprocess.TimeoutExpired:
+                logger.error(f"Timeout when cutting precise fragment {fragment_number}.")
+                break
+        
+        return fragments
+
     def create_fragments(
         self, 
         video_path: str, 
@@ -255,13 +358,16 @@ class VideoProcessor:
             fragment_filename = f"fragment_{i+1:03d}_{uuid.uuid4().hex[:4]}.mp4"
             fragment_path = os.path.join(self.output_dir, fragment_filename)
             
-            # Use stream copy for ultra-fast cutting without re-encoding
+            # Use precise cutting with minimal re-encoding for accuracy
             cmd = [
                 'ffmpeg',
-                '-ss', str(start_time),
                 '-i', video_path,
+                '-ss', str(start_time),  # Moved after -i for more precision
                 '-t', str(actual_duration),
-                '-c', 'copy', # This is the key for performance
+                '-c:v', 'libx264',  # Light re-encoding for precision
+                '-preset', 'ultrafast',  # Fastest encoding preset
+                '-crf', '23',  # Good quality/speed balance
+                '-c:a', 'copy',  # Keep audio as-is for speed
                 '-avoid_negative_ts', 'make_zero',
                 '-y',
                 fragment_path

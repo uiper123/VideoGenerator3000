@@ -231,6 +231,7 @@ def process_video(self, task_id: str, local_path: str, settings_dict: Dict[str, 
         processor = VideoProcessor(output_dir)
         
         # Process video into fragments with professional layout
+        # Use precise cutting method for accurate timing
         if enable_subtitles:
             fragments_data = processor.create_fragments_with_subtitles(
                 video_path=local_path,
@@ -240,7 +241,8 @@ def process_video(self, task_id: str, local_path: str, settings_dict: Dict[str, 
                 subtitle_style="modern"
             )
         else:
-            fragments_data = processor.create_fragments(
+            # Use precise method for better timing accuracy
+            fragments_data = processor.create_fragments_precise(
                 video_path=local_path,
                 fragment_duration=fragment_duration,
                 quality=quality,
