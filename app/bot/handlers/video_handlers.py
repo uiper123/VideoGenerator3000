@@ -830,7 +830,10 @@ async def set_title_size_value(callback: CallbackQuery, callback_data: SettingsV
     else:
         await callback.answer("❌ Ошибка сохранения настроек", show_alert=True)
     
-    # Return to video settings
+    # Return to video settings with a small delay to ensure DB update
+    import asyncio
+    await asyncio.sleep(0.1)  # Small delay to ensure DB commit
+    
     data = await state.get_data()
     source = data.get("source_url", data.get("file_name", "Unknown"))
     await show_video_settings(callback, state, source)
