@@ -21,8 +21,7 @@ from app.bot.keyboards.main_menu import (
     get_video_settings_keyboard,
     get_cancel_keyboard,
     get_back_keyboard,
-    get_task_status_keyboard,
-    StyleAction  # Added StyleAction for title size button
+    get_task_status_keyboard
 )
 from app.config.constants import VideoStatus, SUPPORTED_SOURCES, ERROR_MESSAGES, SUCCESS_MESSAGES
 from app.database.connection import get_db_session
@@ -248,8 +247,7 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
         "quality": "1080p",
         "enable_subtitles": True,
         "title": "",
-        "add_part_numbers": False,
-        "title_size": "medium"  # Added default title size
+        "add_part_numbers": False
     })
     
     title_text = settings.get('title', '')
@@ -267,7 +265,6 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
 📊 Качество: {settings['quality']}
 📝 Субтитры: {'Включены' if settings['enable_subtitles'] else 'Отключены'}
 📋 Заголовок: {title_display}
-📏 Размер заголовка: {settings['title_size']}  # Added title size to settings display
 🔢 Нумерация частей: {part_numbers_status}
 🍪 Cookies: {cookies_status}
 
@@ -331,12 +328,6 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
         text="📋 Заголовок",
         callback_data=SettingsValueAction(action="title", value="set")
     )
-
-    # Title size setting
-    builder.button(
-        text="📏 Размер заголовка",
-        callback_data=StyleAction(action="size_settings", text_type="title")
-    )
     
     # Part numbering setting with dynamic text
     part_numbers_text = "🔢 Нумерация частей: ВКЛ" if settings.get('add_part_numbers', False) else "🔢 Нумерация частей: ВЫКЛ"
@@ -365,8 +356,8 @@ async def show_video_settings(message: Union[Message, CallbackQuery], state: FSM
         callback_data=MenuAction(action="video_menu")
     )
     
-    # Arrange buttons: 4 duration, 3 quality, 1 subtitles, 1 title, 1 title size, 1 part numbers, 1 cookies, 1 confirm, 1 back
-    builder.adjust(4, 3, 1, 1, 1, 1, 1, 1, 1)
+    # Arrange buttons: 4 duration, 3 quality, 1 subtitles, 1 title, 1 part numbers, 1 cookies, 1 confirm, 1 back
+    builder.adjust(4, 3, 1, 1, 1, 1, 1, 1)
     
     keyboard = builder.as_markup()
     
@@ -550,8 +541,7 @@ async def set_title_setting(callback: CallbackQuery, state: FSMContext) -> None:
         "fragment_duration": 30,
         "quality": "1080p",
         "enable_subtitles": True,
-        "title": "",
-        "add_part_numbers": False
+        "title": ""
     })
     
     # Ensure we're in the right state
