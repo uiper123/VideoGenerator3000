@@ -22,7 +22,7 @@ class UserSettingsService:
     DEFAULT_SETTINGS = {
         'title_style': {
             'color': 'white',
-            'size': 'large',  # Заголовки по умолчанию больше
+            'size': 'medium',
             'font': 'DejaVu Sans Bold'
         },
         'subtitle_style': {
@@ -225,13 +225,10 @@ class UserSettingsService:
     def get_size_name(size_value: str) -> str:
         """Get human-readable size name."""
         size_names = {
-            'tiny': '🔍 Крошечный',
-            'small': '📏 Маленький', 
+            'small': '📏 Маленький',
             'medium': '📐 Средний',
             'large': '📊 Большой',
-            'extra_large': '📈 Очень большой',
-            'huge': '🎯 Огромный',
-            'massive': '🏔️ Массивный'
+            'extra_large': '📈 Очень большой'
         }
         return size_names.get(size_value, size_value) 
 

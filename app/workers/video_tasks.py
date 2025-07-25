@@ -223,34 +223,6 @@ def process_video(self, task_id: str, local_path: str, settings_dict: Dict[str, 
         enable_subtitles = settings_dict.get("enable_subtitles", True)
         title = settings_dict.get("title", "")
         
-        # Get user ID for this task
-        user_id = get_user_id_by_task(task_id)
-        
-        # Get user style settings (synchronous version needed for Celery)
-        title_size = "large"  # default
-        subtitle_size = "medium"  # default
-        title_color = "red"  # default
-        subtitle_color = "white"  # default
-        
-        if user_id:
-            try:
-                # Get user settings synchronously
-                with get_sync_db_session() as session:
-                    user = session.get(User, user_id)
-                    if user and user.settings:
-                        user_settings = user.settings
-                        title_style = user_settings.get('title_style', {})
-                        subtitle_style = user_settings.get('subtitle_style', {})
-                        
-                        title_size = title_style.get('size', 'large')
-                        subtitle_size = subtitle_style.get('size', 'medium')
-                        title_color = title_style.get('color', 'red')
-                        subtitle_color = subtitle_style.get('color', 'white')
-                        
-                        logger.info(f"[DEBUG] User {user_id} style settings: title_size={title_size}, subtitle_size={subtitle_size}")
-            except Exception as e:
-                logger.error(f"Error getting user style settings for user {user_id}: {e}")
-        
         # Create output directory
         output_dir = f"/tmp/processed/{task_id}"
         os.makedirs(output_dir, exist_ok=True)
@@ -258,18 +230,14 @@ def process_video(self, task_id: str, local_path: str, settings_dict: Dict[str, 
         # Initialize processor
         processor = VideoProcessor(output_dir)
         
-        # Process video into fragments with professional layout and user style settings
+        # Process video into fragments with professional layout
         if enable_subtitles:
             fragments_data = processor.create_fragments_with_subtitles(
                 video_path=local_path,
                 fragment_duration=fragment_duration,
                 quality=quality,
                 title=title,
-                subtitle_style="modern",
-                title_color=title_color,
-                title_size=title_size,
-                subtitle_color=subtitle_color,
-                subtitle_size=subtitle_size
+                subtitle_style="modern"
             )
         else:
             fragments_data = processor.create_fragments(
@@ -277,11 +245,7 @@ def process_video(self, task_id: str, local_path: str, settings_dict: Dict[str, 
                 fragment_duration=fragment_duration,
                 quality=quality,
                 title=title,
-                subtitle_style="modern",
-                title_color=title_color,
-                title_size=title_size,
-                subtitle_color=subtitle_color,
-                subtitle_size=subtitle_size
+                subtitle_style="modern"
             )
         
         fragments = []
@@ -1014,10 +978,7 @@ def get_user_settings(task_id: str) -> Dict[str, Any]:
         if not task or not task.user_id:
             logger.info("No user found for task, using default styles.")
             return {
-                "title_color": "red",
-                "title_size": "large",
-                "subtitle_color": "white", 
-                "subtitle_size": "medium",
+                "title_style": DEFAULT_TEXT_STYLES['title'],
                 "subtitle_font_path": get_subtitle_font_path()
             }
         
@@ -1025,22 +986,12 @@ def get_user_settings(task_id: str) -> Dict[str, Any]:
         if not user or not user.settings:
             logger.info(f"No custom settings for user {task.user_id}, using defaults.")
             return {
-                "title_color": "red",
-                "title_size": "large",
-                "subtitle_color": "white",
-                "subtitle_size": "medium", 
+                "title_style": DEFAULT_TEXT_STYLES['title'],
                 "subtitle_font_path": get_subtitle_font_path()
             }
 
         settings = user.settings
-        title_style = settings.get('title_style', {})
-        subtitle_style = settings.get('subtitle_style', {})
-        
-        # Extract individual style parameters
-        title_color = title_style.get('color', 'red')
-        title_size = title_style.get('size', 'large')
-        subtitle_color = subtitle_style.get('color', 'white')
-        subtitle_size = subtitle_style.get('size', 'medium')
+        title_style = settings.get('title_style', DEFAULT_TEXT_STYLES['title'])
         
         # Get font path from settings if available
         font_name = title_style.get('font', 'Obelix Pro')
@@ -1048,12 +999,9 @@ def get_user_settings(task_id: str) -> Dict[str, Any]:
         if not os.path.exists(font_path):
              font_path = f"/app/fonts/Obelix Pro.ttf" # Default fallback
         
-        logger.info(f"Loaded settings for user {task.user_id}: title_color={title_color}, title_size={title_size}, subtitle_color={subtitle_color}, subtitle_size={subtitle_size}")
+        logger.info(f"Loaded settings for user {task.user_id}: {title_style}")
         return {
-            "title_color": title_color,
-            "title_size": title_size,
-            "subtitle_color": subtitle_color,
-            "subtitle_size": subtitle_size,
+            "title_style": title_style,
             "font_path": font_path,
             "subtitle_font_path": get_subtitle_font_path()
         }

@@ -574,26 +574,13 @@ def get_size_settings_keyboard(text_type: str) -> InlineKeyboardMarkup:
     """
     builder = InlineKeyboardBuilder()
     
-    # Size options - расширенный список для заголовков
-    if text_type == "title":
-        sizes = [
-            ("🔍 Крошечный", "tiny"),
-            ("📏 Маленький", "small"),
-            ("📐 Средний", "medium"),
-            ("📊 Большой", "large"),
-            ("📈 Очень большой", "extra_large"),
-            ("🎯 Огромный", "huge"),
-            ("🏔️ Массивный", "massive"),
-        ]
-    else:
-        # Для субтитров оставляем стандартные размеры
-        sizes = [
-            ("🔍 Крошечный", "tiny"),
-            ("📏 Маленький", "small"),
-            ("📐 Средний", "medium"),
-            ("📊 Большой", "large"),
-            ("📈 Очень большой", "extra_large"),
-        ]
+    # Size options
+    sizes = [
+        ("📏 Маленький", "small"),
+        ("📐 Средний", "medium"),
+        ("📊 Большой", "large"),
+        ("📈 Очень большой", "extra_large"),
+    ]
     
     for size_name, size_value in sizes:
         builder.button(
@@ -612,10 +599,7 @@ def get_size_settings_keyboard(text_type: str) -> InlineKeyboardMarkup:
         callback_data=StyleAction(action="text_settings", text_type=text_type)
     )
     
-    # Arrange buttons - для заголовков больше кнопок
-    if text_type == "title":
-        builder.adjust(2, 2, 2, 1, 1)  # 7 размеров + назад
-    else:
-        builder.adjust(2, 2, 1, 1)  # 5 размеров + назад
+    # Arrange in 2x2 + 1 layout
+    builder.adjust(2, 2, 1)
     
     return builder.as_markup() 
