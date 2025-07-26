@@ -637,8 +637,8 @@ class VideoProcessor:
             y_position = int(height * style['position_y_ratio'])
             
             # drawtext для титров
-            title_filter = f"drawtext:text='{title_escaped}':fontfile={fontfile}:fontsize={font_size}:fontcolor={style['color']}:bordercolor={style.get('border_color', 'black')}:borderw={style.get('border_width', 3)}:x=(w-text_w)/2:y={y_position}"
-            filters.append(f"{current_stream}{title_filter}[with_title]")
+            title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={font_size}:fontcolor={style['color']}:bordercolor={style.get('border_color', 'black')}:borderw={style.get('border_width', 3)}:x=(w-text_w)/2:y={y_position}"
+            filters.append(f"{current_stream},{title_filter}[with_title]")
             current_stream = "[with_title]"
         
         # Always add footer "cl.funtime.su"
@@ -646,8 +646,8 @@ class VideoProcessor:
         footer_font_size = int(height * footer_style['size_ratio'])
         footer_y_position = int(height * footer_style['position_y_ratio'])
         
-        footer_filter = f"drawtext:text='{footer_style['text']}':fontfile={fontfile}:fontsize={footer_font_size}:fontcolor={footer_style['color']}:bordercolor={footer_style['border_color']}:borderw={footer_style['border_width']}:x=(w-text_w)/2:y={footer_y_position}"
-        filters.append(f"{current_stream}{footer_filter}[output]")
+        footer_filter = f"drawtext=text='{footer_style['text']}':fontfile={fontfile}:fontsize={footer_font_size}:fontcolor={footer_style['color']}:bordercolor={footer_style['border_color']}:borderw={footer_style['border_width']}:x=(w-text_w)/2:y={footer_y_position}"
+        filters.append(f"{current_stream},{footer_filter}[output]")
         
         # Note: Fade effects removed due to FFmpeg compatibility issues
         # Can be added later with proper syntax: fade=in:0:30,fade=out:st=duration-30:d=30
@@ -1673,7 +1673,7 @@ class VideoProcessor:
                 f"x=(w-text_w)/2:y={title_y}:"
                 f"borderw={title_style['border_width']}:bordercolor={title_style['border_color']}"
             )
-            video_filters.append(f"{current_stream}{title_filter}[titled]")
+            video_filters.append(f"{current_stream},{title_filter}[titled]")
             current_stream = "[titled]"
         
         # 5. Animated Subtitle Overlay
@@ -1714,7 +1714,7 @@ class VideoProcessor:
 
             if subtitle_drawtext_filters:
                 full_subtitle_filter = ",".join(subtitle_drawtext_filters)
-                video_filters.append(f"{current_stream}{full_subtitle_filter}[output]")
+                video_filters.append(f"{current_stream},{full_subtitle_filter}[output]")
                 current_stream = "[output]"
 
         # Final output mapping

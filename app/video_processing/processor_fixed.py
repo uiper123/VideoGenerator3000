@@ -168,12 +168,12 @@ class VideoProcessor:
         if title:
             title_escaped = title.replace("'", "\\'").replace(":", "\\:")
             title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={int(height*0.025)}:fontcolor=red:x=(w-text_w)/2:y={int(height*0.05)}:box=1:boxcolor=black@0.7:boxborderw=10"
-            filters.append(f"{current_stream}{title_filter}[with_title]")
+            filters.append(f"{current_stream},{title_filter}[with_title]")
             current_stream = "[with_title]"
         
         # Always add footer "cl.funtime.su"
         footer_filter = f"drawtext=text='cl.funtime.su':fontfile={fontfile}:fontsize={int(height*0.02)}:fontcolor=red:x=(w-text_w)/2:y={int(height*0.92)}:bordercolor=black:borderw=2"
-        filters.append(f"{current_stream}{footer_filter}[output]")
+        filters.append(f"{current_stream},{footer_filter}[output]")
         
         return ";".join(filters)
     
