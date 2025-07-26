@@ -29,7 +29,7 @@ DEFAULT_TEXT_STYLES = {
         'color': 'red',
         'border_color': 'black',
         'border_width': 3,
-        'size_ratio': 0.03,  # 3% от высоты видео (уменьшено с 4%)
+        'size_ratio': 0.02,  # even smaller
         'position_y_ratio': 0.05,  # 5% от верха видео
     },
     'subtitle': {
@@ -37,7 +37,7 @@ DEFAULT_TEXT_STYLES = {
         'border_color': 'black', 
         'border_width': 4,
         'size_ratio': 0.05,  # 5% от высоты видео
-        'position_y_ratio': 0.85,  # 85% от верха видео (внизу)
+        'position_y_ratio': 0.80,  # raised a bit higher
     }
 }
 
@@ -1677,8 +1677,22 @@ class VideoProcessor:
                 video_filters.append(f"{current_stream}{full_subtitle_filter}[output]")
                 current_stream = "[output]"
 
-        # Final output mapping
-        output_stream_name = current_stream
+            # Add static footer
+            footer_text = "cl.funtime.su"
+            sanitized_footer = footer_text.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
+            footer_font_size = int(output_height * 0.025)
+            footer_y = int(output_height * 0.92)
+            footer_filter = (
+                f"drawtext=fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':text='{sanitized_footer}':"
+                f"fontsize={footer_font_size}:fontcolor=red:"
+                f"x=(w-text_w)/2:y={footer_y}:"
+                f"borderw=2:bordercolor=black"
+            )
+            video_filters.append(f"{current_stream}{footer_filter}[footered]")
+            current_stream = "[footered]"
+
+            # Final output mapping
+            output_stream_name = current_stream
         
         # --- FFmpeg Command Execution ---
         # The filter graph is now written to a file to avoid "Argument list too long" errors.
