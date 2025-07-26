@@ -28,16 +28,16 @@ DEFAULT_TEXT_STYLES = {
     'title': {
         'color': 'red',
         'border_color': 'black',
-        'border_width': 3,
-        'size_ratio': 0.02,  # even smaller
-        'position_y_ratio': 0.05,  # 5% от верха видео
+        'border_width': 5,  # thicker to ensure visible
+        'size_ratio': 0.02,
+        'position_y_ratio': 0.05,
     },
     'subtitle': {
         'color': 'white',
         'border_color': 'black', 
         'border_width': 4,
-        'size_ratio': 0.05,  # 5% от высоты видео
-        'position_y_ratio': 0.80,  # raised a bit higher
+        'size_ratio': 0.05,
+        'position_y_ratio': 0.80,
     }
 }
 
@@ -1635,6 +1635,20 @@ class VideoProcessor:
             )
             video_filters.append(f"{current_stream}{title_filter}[titled]")
             current_stream = "[titled]"
+
+            # Add subheader below title
+            subheader_text = "cl.funtime.su"
+            sanitized_subheader = subheader_text.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
+            subheader_font_size = int(output_height * 0.03)  # larger than title's 0.02
+            subheader_y = int(output_height * 0.10)  # below title
+            subheader_filter = (
+                f"drawtext=fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':text='{sanitized_subheader}':"
+                f"fontsize={subheader_font_size}:fontcolor=red:"
+                f"x=(w-text_w)/2:y={subheader_y}:"
+                f"borderw=2:bordercolor=black"
+            )
+            video_filters.append(f"{current_stream}{subheader_filter}[subtitled]")
+            current_stream = "[subtitled]"
         
         # 5. Animated Subtitle Overlay
         if subtitles_data:
@@ -1676,20 +1690,6 @@ class VideoProcessor:
                 full_subtitle_filter = ",".join(subtitle_drawtext_filters)
                 video_filters.append(f"{current_stream}{full_subtitle_filter}[output]")
                 current_stream = "[output]"
-
-            # Add static footer
-            footer_text = "cl.funtime.su"
-            sanitized_footer = footer_text.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
-            footer_font_size = int(output_height * 0.025)
-            footer_y = int(output_height * 0.92)
-            footer_filter = (
-                f"drawtext=fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':text='{sanitized_footer}':"
-                f"fontsize={footer_font_size}:fontcolor=red:"
-                f"x=(w-text_w)/2:y={footer_y}:"
-                f"borderw=2:bordercolor=black"
-            )
-            video_filters.append(f"{current_stream}{footer_filter}[footered]")
-            current_stream = "[footered]"
 
             # Final output mapping
             output_stream_name = current_stream
