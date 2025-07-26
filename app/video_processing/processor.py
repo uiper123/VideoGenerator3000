@@ -1637,7 +1637,7 @@ class VideoProcessor:
             current_stream = "[titled]"
 
             # Add subheader below title
-            subheader_text = "IP-cl.funtime.su"
+            subheader_text = ""
             sanitized_subheader = subheader_text.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
             subheader_font_size = int(output_height * 0.04)  # even larger
             subheader_y = int(output_height * 0.10)  # below title
