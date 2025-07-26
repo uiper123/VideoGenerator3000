@@ -151,29 +151,25 @@ class VideoProcessor:
         # Overlay main video on blurred background
         filters.append(f"[bg_blurred][main_scaled]overlay=(W-w)/2:{main_area_top}[with_main]")
         
-        # Determine font file to use
-        if font_path and os.path.exists(font_path):
-            fontfile = font_path
-        else:
-            # Try Obelix Pro font first
-            obelix_font_path = "/app/fonts/Obelix Pro.ttf"
-            if os.path.exists(obelix_font_path):
-                fontfile = obelix_font_path
-            else:
-                fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        
-        current_stream = "[with_main]"
-        
         # Add title overlay if provided
         if title:
+            # Use custom font if provided, otherwise use default
+            if font_path and os.path.exists(font_path):
+                fontfile = font_path
+            else:
+                # Try Obelix Pro font first
+                obelix_font_path = "/app/fonts/Obelix Pro.ttf"
+                if os.path.exists(obelix_font_path):
+                    fontfile = obelix_font_path
+                else:
+                    fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            
             title_escaped = title.replace("'", "\\'").replace(":", "\\:")
-            title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={int(height*0.025)}:fontcolor=red:x=(w-text_w)/2:y={int(height*0.05)}:box=1:boxcolor=black@0.7:boxborderw=10"
-            filters.append(f"{current_stream},{title_filter}[with_title]")
-            current_stream = "[with_title]"
-        
-        # Always add footer "cl.funtime.su"
-        footer_filter = f"drawtext=text='cl.funtime.su':fontfile={fontfile}:fontsize={int(height*0.02)}:fontcolor=red:x=(w-text_w)/2:y={int(height*0.92)}:bordercolor=black:borderw=2"
-        filters.append(f"{current_stream},{footer_filter}[output]")
+            title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={int(height*0.03)}:fontcolor=red:x=(w-text_w)/2:y={int(height*0.05)}:box=1:boxcolor=black@0.7:boxborderw=10"
+            filters.append(f"[with_main]{title_filter}[output]")
+        else:
+            # If no title, rename the final output
+            filters.append("[with_main]null[output]")
         
         return ";".join(filters)
     

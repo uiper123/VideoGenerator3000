@@ -29,7 +29,7 @@ DEFAULT_TEXT_STYLES = {
         'color': 'red',
         'border_color': 'black',
         'border_width': 3,
-        'size_ratio': 0.025,  # 2.5% от высоты видео (еще меньше)
+        'size_ratio': 0.03,  # 3% от высоты видео (уменьшено с 4%)
         'position_y_ratio': 0.05,  # 5% от верха видео
     },
     'subtitle': {
@@ -37,15 +37,7 @@ DEFAULT_TEXT_STYLES = {
         'border_color': 'black', 
         'border_width': 4,
         'size_ratio': 0.05,  # 5% от высоты видео
-        'position_y_ratio': 0.78,  # 78% от верха видео (приподняли выше)
-    },
-    'footer': {
-        'color': 'red',
-        'border_color': 'black',
-        'border_width': 2,
-        'size_ratio': 0.02,  # 2% от высоты видео (меньше основного заголовка)
-        'position_y_ratio': 0.92,  # 92% от верха видео (внизу)
-        'text': 'cl.funtime.su'  # Фиксированный текст
+        'position_y_ratio': 0.85,  # 85% от верха видео (внизу)
     }
 }
 
@@ -63,10 +55,10 @@ TEXT_COLOR_PRESETS = {
 
 # Пресеты размеров
 TEXT_SIZE_PRESETS = {
-    'small': {'title': 0.02, 'subtitle': 0.04, 'footer': 0.015},      # Еще меньше заголовок
-    'medium': {'title': 0.025, 'subtitle': 0.05, 'footer': 0.02},     # Еще меньше заголовок
-    'large': {'title': 0.03, 'subtitle': 0.06, 'footer': 0.025},      # Еще меньше заголовок
-    'extra_large': {'title': 0.035, 'subtitle': 0.07, 'footer': 0.03}, # Еще меньше заголовок
+    'small': {'title': 0.025, 'subtitle': 0.04},      # Уменьшено с 0.03
+    'medium': {'title': 0.03, 'subtitle': 0.05},      # Уменьшено с 0.04
+    'large': {'title': 0.035, 'subtitle': 0.06},      # Уменьшено с 0.05
+    'extra_large': {'title': 0.04, 'subtitle': 0.07}, # Уменьшено с 0.06
 }
 
 logger = logging.getLogger(__name__)
@@ -238,25 +230,15 @@ class VideoProcessor:
             fragment_filename = f"fragment_{fragment_number:03d}_{uuid.uuid4().hex[:4]}.mp4"
             fragment_path = os.path.join(self.output_dir, fragment_filename)
             
-            # Use professional processing with filters (includes title and footer)
-            fragment_title = f"{title} - Часть {fragment_number}" if title and total_duration > fragment_duration else title
-            
-            # Get output resolution based on quality
-            output_width, output_height = self._get_output_resolution(quality)
-            
-            # Use precise cutting with professional filters
+            # Use precise cutting with frame-accurate seeking
             cmd = [
                 'ffmpeg',
                 '-ss', str(start_time),  # Seek before input for precision
                 '-i', video_path,
                 '-t', str(actual_duration),
-                '-filter_complex', self._build_video_filters(output_width, output_height, fragment_title),
-                '-map', '[output]',  # Map the processed video stream
-                '-map', '0:a?',  # Map the original audio stream if it exists
                 '-c:v', 'libx264',
                 '-preset', 'fast',  # Balance between speed and quality
                 '-crf', '20',  # Good quality
-                '-r', str(SHORTS_FPS),
                 '-c:a', 'aac',
                 '-b:a', '128k',
                 '-avoid_negative_ts', 'make_zero',
@@ -376,29 +358,17 @@ class VideoProcessor:
             fragment_filename = f"fragment_{i+1:03d}_{uuid.uuid4().hex[:4]}.mp4"
             fragment_path = os.path.join(self.output_dir, fragment_filename)
             
-            # Use professional processing with filters (includes title and footer)
-            fragment_title = f"{title} - Часть {i+1}" if title and total_fragments > 1 else title
-            
-            # Get output resolution based on quality
-            output_width, output_height = self._get_output_resolution(quality)
-            
-            # Build professional FFmpeg command with filters
+            # Use precise cutting with minimal re-encoding for accuracy
             cmd = [
                 'ffmpeg',
                 '-i', video_path,
-                '-ss', str(start_time),
+                '-ss', str(start_time),  # Moved after -i for more precision
                 '-t', str(actual_duration),
-                '-filter_complex', self._build_video_filters(output_width, output_height, fragment_title),
-                '-map', '[output]',  # Map the processed video stream
-                '-map', '0:a?',  # Map the original audio stream if it exists
-                '-c:v', 'libx264',
-                '-preset', 'fast',  # Balance between speed and quality
-                '-crf', '20',  # Good quality
-                '-r', str(SHORTS_FPS),
-                '-c:a', 'aac',
-                '-b:a', '128k',
+                '-c:v', 'libx264',  # Light re-encoding for precision
+                '-preset', 'ultrafast',  # Fastest encoding preset
+                '-crf', '23',  # Good quality/speed balance
+                '-c:a', 'copy',  # Keep audio as-is for speed
                 '-avoid_negative_ts', 'make_zero',
-                '-movflags', '+faststart',
                 '-y',
                 fragment_path
             ]
@@ -611,24 +581,22 @@ class VideoProcessor:
         # Overlay main video on blurred background
         filters.append(f"[bg_blurred][main_scaled]overlay=(W-w)/2:{main_area_top}[with_main]")
         
-        # Determine font file to use
-        if font_path and os.path.exists(font_path):
-            fontfile = font_path
-        else:
-            # Try Obelix Pro font first
-            obelix_font_path = "/app/fonts/Obelix Pro.ttf"
-            if os.path.exists(obelix_font_path):
-                fontfile = obelix_font_path
-            else:
-                fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        
-        current_stream = "[with_main]"
-        
         # Add title overlay if provided
         if title:
             # Use custom style or default
             style = title_style or DEFAULT_TEXT_STYLES['title']
             style['color'] = 'red'  # Жёстко фиксируем цвет
+            
+            # Use custom font if provided, otherwise use Obelix Pro font
+            if font_path and os.path.exists(font_path):
+                fontfile = font_path
+            else:
+                # Try Obelix Pro font first
+                obelix_font_path = "/app/fonts/Obelix Pro.ttf"
+                if os.path.exists(obelix_font_path):
+                    fontfile = obelix_font_path
+                else:
+                    fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             
             title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
             
@@ -637,17 +605,9 @@ class VideoProcessor:
             y_position = int(height * style['position_y_ratio'])
             
             # drawtext для титров
-            title_filter = f"drawtext=text='{title_escaped}':fontfile={fontfile}:fontsize={font_size}:fontcolor={style['color']}:bordercolor={style.get('border_color', 'black')}:borderw={style.get('border_width', 3)}:x=(w-text_w)/2:y={y_position}"
-            filters.append(f"{current_stream},{title_filter}[with_title]")
-            current_stream = "[with_title]"
-        
-        # Always add footer "cl.funtime.su"
-        footer_style = DEFAULT_TEXT_STYLES['footer']
-        footer_font_size = int(height * footer_style['size_ratio'])
-        footer_y_position = int(height * footer_style['position_y_ratio'])
-        
-        footer_filter = f"drawtext=text='{footer_style['text']}':fontfile={fontfile}:fontsize={footer_font_size}:fontcolor={footer_style['color']}:bordercolor={footer_style['border_color']}:borderw={footer_style['border_width']}:x=(w-text_w)/2:y={footer_y_position}"
-        filters.append(f"{current_stream},{footer_filter}[output]")
+            title_filter = f"drawtext:text='{title_escaped}':fontfile={fontfile}:fontsize={font_size}:fontcolor={style['color']}:bordercolor={style.get('border_color', 'black')}:borderw={style.get('border_width', 3)}:x=(w-text_w)/2:y={y_position}"
+            filters.append(f"[with_main]{title_filter}[output]")
+        # Note: If no title, the final output is [with_main], not [output]
         
         # Note: Fade effects removed due to FFmpeg compatibility issues
         # Can be added later with proper syntax: fade=in:0:30,fade=out:st=duration-30:d=30
@@ -1673,7 +1633,7 @@ class VideoProcessor:
                 f"x=(w-text_w)/2:y={title_y}:"
                 f"borderw={title_style['border_width']}:bordercolor={title_style['border_color']}"
             )
-            video_filters.append(f"{current_stream},{title_filter}[titled]")
+            video_filters.append(f"{current_stream}{title_filter}[titled]")
             current_stream = "[titled]"
         
         # 5. Animated Subtitle Overlay
@@ -1714,7 +1674,7 @@ class VideoProcessor:
 
             if subtitle_drawtext_filters:
                 full_subtitle_filter = ",".join(subtitle_drawtext_filters)
-                video_filters.append(f"{current_stream},{full_subtitle_filter}[output]")
+                video_filters.append(f"{current_stream}{full_subtitle_filter}[output]")
                 current_stream = "[output]"
 
         # Final output mapping
