@@ -238,15 +238,25 @@ class VideoProcessor:
             fragment_filename = f"fragment_{fragment_number:03d}_{uuid.uuid4().hex[:4]}.mp4"
             fragment_path = os.path.join(self.output_dir, fragment_filename)
             
-            # Use precise cutting with frame-accurate seeking
+            # Use professional processing with filters (includes title and footer)
+            fragment_title = f"{title} - Часть {fragment_number}" if title and total_duration > fragment_duration else title
+            
+            # Get output resolution based on quality
+            output_width, output_height = self._get_output_resolution(quality)
+            
+            # Use precise cutting with professional filters
             cmd = [
                 'ffmpeg',
                 '-ss', str(start_time),  # Seek before input for precision
                 '-i', video_path,
                 '-t', str(actual_duration),
+                '-filter_complex', self._build_video_filters(output_width, output_height, fragment_title),
+                '-map', '[output]',  # Map the processed video stream
+                '-map', '0:a?',  # Map the original audio stream if it exists
                 '-c:v', 'libx264',
                 '-preset', 'fast',  # Balance between speed and quality
                 '-crf', '20',  # Good quality
+                '-r', str(SHORTS_FPS),
                 '-c:a', 'aac',
                 '-b:a', '128k',
                 '-avoid_negative_ts', 'make_zero',
@@ -366,17 +376,29 @@ class VideoProcessor:
             fragment_filename = f"fragment_{i+1:03d}_{uuid.uuid4().hex[:4]}.mp4"
             fragment_path = os.path.join(self.output_dir, fragment_filename)
             
-            # Use precise cutting with minimal re-encoding for accuracy
+            # Use professional processing with filters (includes title and footer)
+            fragment_title = f"{title} - Часть {i+1}" if title and total_fragments > 1 else title
+            
+            # Get output resolution based on quality
+            output_width, output_height = self._get_output_resolution(quality)
+            
+            # Build professional FFmpeg command with filters
             cmd = [
                 'ffmpeg',
                 '-i', video_path,
-                '-ss', str(start_time),  # Moved after -i for more precision
+                '-ss', str(start_time),
                 '-t', str(actual_duration),
-                '-c:v', 'libx264',  # Light re-encoding for precision
-                '-preset', 'ultrafast',  # Fastest encoding preset
-                '-crf', '23',  # Good quality/speed balance
-                '-c:a', 'copy',  # Keep audio as-is for speed
+                '-filter_complex', self._build_video_filters(output_width, output_height, fragment_title),
+                '-map', '[output]',  # Map the processed video stream
+                '-map', '0:a?',  # Map the original audio stream if it exists
+                '-c:v', 'libx264',
+                '-preset', 'fast',  # Balance between speed and quality
+                '-crf', '20',  # Good quality
+                '-r', str(SHORTS_FPS),
+                '-c:a', 'aac',
+                '-b:a', '128k',
                 '-avoid_negative_ts', 'make_zero',
+                '-movflags', '+faststart',
                 '-y',
                 fragment_path
             ]
