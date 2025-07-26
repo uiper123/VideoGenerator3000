@@ -29,7 +29,7 @@ DEFAULT_TEXT_STYLES = {
         'color': 'red',
         'border_color': 'black',
         'border_width': 3,
-        'size_ratio': 0.03,  # 3% от высоты видео (уменьшено с 4%)
+        'size_ratio': 0.025,  # 2.5% от высоты видео (еще меньше)
         'position_y_ratio': 0.05,  # 5% от верха видео
     },
     'subtitle': {
@@ -37,7 +37,15 @@ DEFAULT_TEXT_STYLES = {
         'border_color': 'black', 
         'border_width': 4,
         'size_ratio': 0.05,  # 5% от высоты видео
-        'position_y_ratio': 0.85,  # 85% от верха видео (внизу)
+        'position_y_ratio': 0.78,  # 78% от верха видео (приподняли выше)
+    },
+    'footer': {
+        'color': 'red',
+        'border_color': 'black',
+        'border_width': 2,
+        'size_ratio': 0.02,  # 2% от высоты видео (меньше основного заголовка)
+        'position_y_ratio': 0.92,  # 92% от верха видео (внизу)
+        'text': 'cl.funtime.su'  # Фиксированный текст
     }
 }
 
@@ -55,10 +63,10 @@ TEXT_COLOR_PRESETS = {
 
 # Пресеты размеров
 TEXT_SIZE_PRESETS = {
-    'small': {'title': 0.025, 'subtitle': 0.04},      # Уменьшено с 0.03
-    'medium': {'title': 0.03, 'subtitle': 0.05},      # Уменьшено с 0.04
-    'large': {'title': 0.035, 'subtitle': 0.06},      # Уменьшено с 0.05
-    'extra_large': {'title': 0.04, 'subtitle': 0.07}, # Уменьшено с 0.06
+    'small': {'title': 0.02, 'subtitle': 0.04, 'footer': 0.015},      # Еще меньше заголовок
+    'medium': {'title': 0.025, 'subtitle': 0.05, 'footer': 0.02},     # Еще меньше заголовок
+    'large': {'title': 0.03, 'subtitle': 0.06, 'footer': 0.025},      # Еще меньше заголовок
+    'extra_large': {'title': 0.035, 'subtitle': 0.07, 'footer': 0.03}, # Еще меньше заголовок
 }
 
 logger = logging.getLogger(__name__)
@@ -581,22 +589,24 @@ class VideoProcessor:
         # Overlay main video on blurred background
         filters.append(f"[bg_blurred][main_scaled]overlay=(W-w)/2:{main_area_top}[with_main]")
         
+        # Determine font file to use
+        if font_path and os.path.exists(font_path):
+            fontfile = font_path
+        else:
+            # Try Obelix Pro font first
+            obelix_font_path = "/app/fonts/Obelix Pro.ttf"
+            if os.path.exists(obelix_font_path):
+                fontfile = obelix_font_path
+            else:
+                fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        
+        current_stream = "[with_main]"
+        
         # Add title overlay if provided
         if title:
             # Use custom style or default
             style = title_style or DEFAULT_TEXT_STYLES['title']
             style['color'] = 'red'  # Жёстко фиксируем цвет
-            
-            # Use custom font if provided, otherwise use Obelix Pro font
-            if font_path and os.path.exists(font_path):
-                fontfile = font_path
-            else:
-                # Try Obelix Pro font first
-                obelix_font_path = "/app/fonts/Obelix Pro.ttf"
-                if os.path.exists(obelix_font_path):
-                    fontfile = obelix_font_path
-                else:
-                    fontfile = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
             
             title_escaped = title.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
             
@@ -606,8 +616,16 @@ class VideoProcessor:
             
             # drawtext для титров
             title_filter = f"drawtext:text='{title_escaped}':fontfile={fontfile}:fontsize={font_size}:fontcolor={style['color']}:bordercolor={style.get('border_color', 'black')}:borderw={style.get('border_width', 3)}:x=(w-text_w)/2:y={y_position}"
-            filters.append(f"[with_main]{title_filter}[output]")
-        # Note: If no title, the final output is [with_main], not [output]
+            filters.append(f"{current_stream}{title_filter}[with_title]")
+            current_stream = "[with_title]"
+        
+        # Always add footer "cl.funtime.su"
+        footer_style = DEFAULT_TEXT_STYLES['footer']
+        footer_font_size = int(height * footer_style['size_ratio'])
+        footer_y_position = int(height * footer_style['position_y_ratio'])
+        
+        footer_filter = f"drawtext:text='{footer_style['text']}':fontfile={fontfile}:fontsize={footer_font_size}:fontcolor={footer_style['color']}:bordercolor={footer_style['border_color']}:borderw={footer_style['border_width']}:x=(w-text_w)/2:y={footer_y_position}"
+        filters.append(f"{current_stream}{footer_filter}[output]")
         
         # Note: Fade effects removed due to FFmpeg compatibility issues
         # Can be added later with proper syntax: fade=in:0:30,fade=out:st=duration-30:d=30
