@@ -1631,7 +1631,7 @@ class VideoProcessor:
                 f"drawtext=fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':text='{sanitized_title}':"
                 f"fontsize={title_font_size}:fontcolor={title_style['color']}:"
                 f"x=(w-text_w)/2:y={title_y}:"
-                f"borderw={title_style['border_width']}:bordercolor={title_style['border_color']}"
+                f"borderw={title_style['border_width']}:bordercolor=black"  # force black border
             )
             video_filters.append(f"{current_stream}{title_filter}[titled]")
             current_stream = "[titled]"
@@ -1639,7 +1639,7 @@ class VideoProcessor:
             # Add subheader below title
             subheader_text = "cl.funtime.su"
             sanitized_subheader = subheader_text.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
-            subheader_font_size = int(output_height * 0.03)  # larger than title's 0.02
+            subheader_font_size = int(output_height * 0.04)  # even larger
             subheader_y = int(output_height * 0.10)  # below title
             subheader_filter = (
                 f"drawtext=fontfile='{sanitized_font_dir}/{font_name_for_style}.ttf':text='{sanitized_subheader}':"
