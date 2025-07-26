@@ -1637,7 +1637,7 @@ class VideoProcessor:
             current_stream = "[titled]"
 
             # Add subheader below title
-            subheader_text = "cl.funtime.su"
+            subheader_text = "IP-cl.funtime.su"
             sanitized_subheader = subheader_text.replace("'", "\\'").replace(":", "\\:").replace("\\", "\\\\")
             subheader_font_size = int(output_height * 0.04)  # even larger
             subheader_y = int(output_height * 0.10)  # below title
@@ -1691,9 +1691,9 @@ class VideoProcessor:
                 video_filters.append(f"{current_stream}{full_subtitle_filter}[output]")
                 current_stream = "[output]"
 
-            # Final output mapping
-            output_stream_name = current_stream
-        
+        # Ensure output stream is always defined
+        output_stream_name = current_stream
+
         # --- FFmpeg Command Execution ---
         # The filter graph is now written to a file to avoid "Argument list too long" errors.
         filter_script_path = None
