@@ -1,49 +1,33 @@
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: videobot_postgres
-    environment:
-      POSTGRES_DB: videobot
-      POSTGRES_USER: videobot
-      POSTGRES_PASSWORD: videobot_password
-    ports:
-      - "5432:5432"
-    volumes:
-      - D:/docker-data/postgres:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U videobot -d videobot"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # Redis for Celery and caching
   redis:
     image: redis:7-alpine
     container_name: videobot_redis
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
     volumes:
-      - D:/docker-data/redis:/data
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
 
   # Video Bot Application
   videobot:
     build: .
     container_name: videobot_app
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      - DEBUG=true
-      - DATABASE_URL=postgresql+asyncpg://videobot:videobot_password@postgres:5432/videobot
+      - DEBUG=false
+      - ENVIRONMENT=production
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
@@ -52,62 +36,42 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./app:/app/app
       - video_temp:/tmp/videos
+      - processed_temp:/tmp/processed
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health', timeout=5)"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
 
   # Celery Worker for video processing
   celery_worker:
     build: .
     container_name: videobot_celery_worker
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     environment:
-      - DEBUG=true
-      - DATABASE_URL=postgresql+asyncpg://videobot:videobot_password@postgres:5432/videobot
+      - DEBUG=false
+      - ENVIRONMENT=production
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
     env_file:
       - .env
     volumes:
-      - ./app:/app/app
       - video_temp:/tmp/videos
-      - ./fonts:/app/fonts
-    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2
+      - processed_temp:/tmp/processed
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=10
     restart: unless-stopped
-
-  # Celery Beat for scheduled tasks
-  celery_beat:
-    build: .
-    container_name: videobot_celery_beat
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      - DEBUG=true
-      - DATABASE_URL=postgresql+asyncpg://videobot:videobot_password@postgres:5432/videobot
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/1
-      - CELERY_RESULT_BACKEND=redis://redis:6379/2
-    env_file:
-      - .env
-    volumes:
-      - ./app:/app/app
-      - ./fonts:/app/fonts
-    command: celery -A app.workers.celery_app beat --loglevel=info
-    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
 
   # Flower for Celery monitoring (optional) - temporarily disabled
   # flower:
@@ -125,24 +89,9 @@ services:
   #   restart: unless-stopped
 
 volumes:
-  postgres_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: D:/docker-data/postgres
   redis_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: D:/docker-data/redis
   video_temp:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: D:/docker-data/videos
+  processed_temp:
 
 networks:
   default:

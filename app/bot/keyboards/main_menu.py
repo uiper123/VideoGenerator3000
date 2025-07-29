@@ -48,12 +48,9 @@ class StyleAction(CallbackData, prefix="style"):
     value: str = ""
 
 
-def get_main_menu_keyboard(user_role: UserRole = UserRole.USER) -> InlineKeyboardMarkup:
+def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """
     Get main menu inline keyboard.
-    
-    Args:
-        user_role: User's role to determine available options
         
     Returns:
         InlineKeyboardMarkup: Main menu keyboard
@@ -66,37 +63,14 @@ def get_main_menu_keyboard(user_role: UserRole = UserRole.USER) -> InlineKeyboar
         callback_data=MenuAction(action="video_menu")
     )
     
-    # Settings button
-    builder.button(
-        text=f"{MENU_EMOJIS['settings']} Настройки",
-        callback_data=MenuAction(action="settings_menu")
-    )
-    
-    # Statistics button
-    builder.button(
-        text=f"{MENU_EMOJIS['stats']} Моя статистика",
-        callback_data=MenuAction(action="stats_menu")
-    )
-    
     # Help button
     builder.button(
         text=f"{MENU_EMOJIS['help']} Помощь",
         callback_data=MenuAction(action="help")
     )
     
-    # Admin panel for admins and moderators
-    if user_role in [UserRole.ADMIN, UserRole.MODERATOR]:
-        builder.button(
-            text=f"{MENU_EMOJIS['admin']} Админ-панель",
-            callback_data=MenuAction(action="admin_menu")
-        )
-    
-    # Arrange buttons in a 2x2 grid
-    builder.adjust(2, 2)
-    
-    # Add admin button separately if needed
-    if user_role in [UserRole.ADMIN, UserRole.MODERATOR]:
-        builder.adjust(2, 2, 1)
+    # Arrange buttons in a 2x1 grid
+    builder.adjust(1, 1)
     
     return builder.as_markup()
 
@@ -121,24 +95,14 @@ def get_video_menu_keyboard() -> InlineKeyboardMarkup:
         callback_data=VideoAction(action="upload_file")
     )
     
-    builder.button(
-        text=f"{MENU_EMOJIS['batch']} Пакетная обработка",
-        callback_data=VideoAction(action="batch_processing")
-    )
-    
-    builder.button(
-        text=f"{MENU_EMOJIS['tasks']} Мои задачи",
-        callback_data=VideoAction(action="my_tasks")
-    )
-    
     # Back button
     builder.button(
         text=f"{MENU_EMOJIS['back']} Назад",
         callback_data=MenuAction(action="main_menu")
     )
     
-    # Arrange in 2x2 + 1 layout
-    builder.adjust(2, 2, 1)
+    # Arrange in 2x1 + 1 layout
+    builder.adjust(2, 1)
     
     return builder.as_markup()
 

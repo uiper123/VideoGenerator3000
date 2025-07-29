@@ -8,32 +8,7 @@ from pydantic import Field, field_validator, SecretStr, ConfigDict
 from pydantic_settings import BaseSettings
 
 
-class DatabaseSettings(BaseSettings):
-    """Database configuration settings."""
-    
-    url: str = Field(
-        default="postgresql+asyncpg://user:password@localhost/videobot",
-        env="DATABASE_URL",
-        description="Database connection URL"
-    )
-    echo: bool = Field(
-        default=False,
-        env="DATABASE_ECHO",
-        description="Enable SQLAlchemy query logging"
-    )
-    pool_size: int = Field(
-        default=20,
-        env="DATABASE_POOL_SIZE",
-        description="Database connection pool size"
-    )
-    max_overflow: int = Field(
-        default=30,
-        env="DATABASE_MAX_OVERFLOW",
-        description="Database connection pool max overflow"
-    )
-
-    class Config:
-        env_prefix = "DATABASE_"
+# Database settings removed - using stateless approach
 
 
 class RedisSettings(BaseSettings):
@@ -195,8 +170,7 @@ class AppSettings(BaseSettings):
     telegram_bot_token: SecretStr = Field(..., env="TELEGRAM_BOT_TOKEN")
     telegram_admin_ids: str = Field(default="", env="TELEGRAM_ADMIN_IDS")
     
-    # Database settings
-    database_url: str = Field(default="postgresql+asyncpg://user:password@localhost/videobot", env="DATABASE_URL")
+    # Database settings removed - using stateless approach
     
     # Redis settings
     redis_url: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")

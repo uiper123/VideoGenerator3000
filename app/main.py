@@ -5,18 +5,16 @@ import asyncio
 import logging
 import sys
 import os
-import json
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import CallbackQuery
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 from aiohttp.web_app import Application
-from aiogram.types import CallbackQuery
 
 from app.config.settings import settings
-from app.database.connection import db_manager
 from app.bot.handlers import user_handlers
 
 
@@ -63,7 +61,6 @@ async def setup_bot_commands(bot: Bot) -> None:
     commands = [
         BotCommand(command="start", description="🏠 Главное меню"),
         BotCommand(command="help", description="❓ Справка и помощь"),
-        BotCommand(command="stats", description="📊 Моя статистика"),
     ]
     
     await bot.set_my_commands(commands)
@@ -78,14 +75,6 @@ async def on_startup(bot: Bot) -> None:
         bot: Bot instance
     """
     logger.info("Starting Video Bot...")
-    
-    # Initialize database
-    try:
-        await db_manager.init_db()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        raise
     
     # Set up bot commands
     await setup_bot_commands(bot)
@@ -111,10 +100,6 @@ async def on_shutdown(bot: Bot) -> None:
     # if settings.telegram_webhook_url:
     #     await bot.delete_webhook()
     #     logger.info("Webhook removed")
-    
-    # Close database connections
-    await db_manager.close()
-    logger.info("Database connections closed")
     
     logger.info("Video Bot shut down successfully!")
 
@@ -142,12 +127,7 @@ def create_app() -> tuple[Bot, Dispatcher]:
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
     
-    # Import and include specific handlers first
-    from app.bot.handlers import font_handlers, settings_handlers
-    dp.include_router(font_handlers.router)
-    dp.include_router(settings_handlers.router)
-    
-    # Include other routers
+    # Include routers
     dp.include_router(user_handlers.router)
     
     # Import and include video handlers
